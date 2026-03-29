@@ -70,7 +70,10 @@ function cleanPhone(phone) {
     if (!p.startsWith('90')) p = '90' + p;
     return p;
 }
-
+// Fonnte'nin URL doğrulaması için GET metodu
+app.get('/webhook', (req, res) => {
+    res.status(200).send("Webhook aktif ve calisiyor");
+});
 // --- Fonnte Webhook Dinleyici ---
 app.post('/webhook', async (req, res) => {
     // Fonnte'nin mesajı tekrar tekrar göndermemesi için HTTP 200 OK yanıtını hemen dönüyoruz.
