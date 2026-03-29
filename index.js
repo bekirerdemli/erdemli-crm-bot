@@ -1,25 +1,36 @@
 require('dotenv').config();
 const express = require('express');
-const bodyParser = require('body-parser'); // Sizin paketiniz eklendi
+const bodyParser = require('body-parser');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-// body-parser ayarları
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// --- TEŞHİS MODU: GELEN HER İSTEĞİ YAZDIRIR ---
+app.use((req, res, next) => {
+    console.log(`\n[${new Date().toLocaleTimeString()}] SİSTEME İSTEK GELDİ: ${req.method} ${req.path}`);
+    if (req.method === 'POST') {
+        console.log('GELEN VERİ (BODY):', req.body);
+    }
+    next();
+});
+
+// Fonnte'nin URL doğrulaması için GET metodu
+app.get('/webhook', (req, res) => {
+    res.status(200).send("Webhook aktif ve calisiyor");
+});
 
 // --- API ve Token Ayarları ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
 
-// --- Google Sheets CSV Linkleri ---
 const URL_CARILER = 'https://docs.google.com/spreadsheets/d/1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M/export?format=csv&gid=1423089940';
 const URL_URUNLER = 'https://docs.google.com/spreadsheets/d/1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M/export?format=csv&gid=1263788777';
 const URL_ISLEMLER = 'https://docs.google.com/spreadsheets/d/1aHKb7lv6sei2ExnIB5Li0pEtygRo3hWLxTJGiHbda0g/export?format=csv&gid=1884664027';
 
 // --- Dahili CSV Ayrıştırıcı ---
-// (Ekstra kütüphane gerektirmemesi için sizin fatura.html yapınız kullanıldı)
 function parseCSV(text) {
     const lines = text.split('\n');
     if (!lines.length) return [];
@@ -49,7 +60,6 @@ function splitRow(line) {
     return result;
 }
 
-// Google Sheets Verilerini Topluca Çekme
 async function fetchAllData() {
     const [resCariler, resUrunler, resIslemler] = await Promise.all([
         axios.get(URL_CARILER),
@@ -63,32 +73,31 @@ async function fetchAllData() {
     };
 }
 
-// Telefon Numarasını Temizleme (0532... -> 90532... formatı için)
 function cleanPhone(phone) {
+    if (!phone) return "";
     let p = String(phone).replace(/[^0-9]/g, '');
     if (p.startsWith('0')) p = p.substring(1);
     if (!p.startsWith('90')) p = '90' + p;
     return p;
 }
-// Fonnte'nin URL doğrulaması için GET metodu
-app.get('/webhook', (req, res) => {
-    res.status(200).send("Webhook aktif ve calisiyor");
-});
+
 // --- Fonnte Webhook Dinleyici ---
 app.post('/webhook', async (req, res) => {
-    // Fonnte'nin mesajı tekrar tekrar göndermemesi için HTTP 200 OK yanıtını hemen dönüyoruz.
-    res.status(200).send({ status: true });
+    res.status(200).send({ status: true }); // Fonnte'ye anında "aldım" diyoruz
 
-    const { sender, message } = req.body;
-    if (!message || !sender) return;
+    // Fonnte bazen 'message' yerine 'text' kullanabilir, ikisine de bakalım
+    const sender = req.body.sender;
+    const message = req.body.message || req.body.text;
+
+    if (!sender || !message) {
+        console.log("⚠️ UYARI: Gönderen numarası veya mesaj metni bulunamadı. (Sistem mesajı olabilir)");
+        return;
+    }
 
     try {
-        console.log(`[Yeni Mesaj] Numara: ${sender} | Mesaj: ${message}`);
+        console.log(`\n💬 İŞLEME ALINIYOR -> Numara: ${sender} | Mesaj: ${message}`);
 
-        // 1. Tablolardan verileri çek
         const { cariler, urunler, islemler } = await fetchAllData();
-
-        // 2. Mesaj atan müşteriyi carilerde bul
         const senderClean = cleanPhone(sender);
         let cariAdi = "Bilinmeyen Müşteri";
         
@@ -97,16 +106,13 @@ app.post('/webhook', async (req, res) => {
             cariAdi = musteri['ÜNVANI 1'] || musteri['Cari Adı'] || "Bilinmeyen Müşteri";
         }
 
-        // 3. Sadece o müşteriye ait geçmiş işlemleri filtrele (Güvenlik)
         const musteriIslemleri = islemler.filter(islem => {
             const islemFirma = islem['Frma'] || islem['Firma'] || '';
             return cariAdi !== "Bilinmeyen Müşteri" && islemFirma.toUpperCase().includes(cariAdi.toUpperCase());
         });
 
-        // 4. Eski @google/generative-ai sürümü için gemini-pro modeli kullanıyoruz
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Pro yerine daha hızlı olan flash modeline geçtik
 
-        // 5. Yapay Zeka Talimatı (Prompt)
         const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka müşteri temsilcisisin.
         Şu an sana mesaj yazan numara: +${sender}
         Veritabanımızdaki Cari Adı: ${cariAdi}
@@ -119,17 +125,17 @@ app.post('/webhook', async (req, res) => {
 
         Müşterinin Mesajı: "${message}"
 
-        KURALLAR (Bunlara Kesinlikle Uy):
-        1. Sadece yukarıda sana verdiğim "LASTİKLER VE FİYATLARI" ve "GEÇMİŞ İŞLEMLERİ" listelerine bakarak cevap ver.
-        2. Müşteri hesabını, faturasını veya bakiyesini sorarsa sadece onun verisine bak. Başka bir firmanın bilgisini ASLA paylaşma.
-        3. Sorunun cevabı verilerde YOKSA, durumu anlayamadıysan veya özel bir pazarlık yapılıyorsa hiçbir bilgi uydurma. SADECE şunu söyle: "Yetkiliye aktarıyorum, size en kısa zamanda dönüş yapacaklar."
+        KURALLAR:
+        1. Sadece "LASTİKLER VE FİYATLARI" ve "GEÇMİŞ İŞLEMLERİ" listelerine bakarak cevap ver.
+        2. Müşteri faturasını veya bakiyesini sorarsa sadece onun verisine bak. Başkasına bilgi verme.
+        3. Sorunun cevabı verilerde YOKSA, SADECE şunu söyle: "Yetkiliye aktarıyorum, size en kısa zamanda dönüş yapacaklar."
         4. Kısa, samimi ve net bir profesyonel dil kullan.`;
 
-        // 6. Gemini'den cevabı al
+        console.log("🧠 Yapay Zeka düşünülüyor...");
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
+        console.log("✅ Yapay Zeka Cevabı Üretti:", aiResponse);
 
-        // 7. Fonnte üzerinden müşteriye cevabı gönder
         await axios.post('https://api.fonnte.com/send', {
             target: sender,
             message: aiResponse,
@@ -138,13 +144,12 @@ app.post('/webhook', async (req, res) => {
             headers: { 'Authorization': FONNTE_TOKEN }
         });
 
-        console.log(`[Cevaplandı] -> ${sender}`);
+        console.log(`🚀 CEVAP GÖNDERİLDİ -> ${sender}`);
 
     } catch (error) {
-        console.error("Bot çalışma hatası:", error);
+        console.error("❌ Bot çalışma hatası:", error.message || error);
     }
 });
 
-// Sunucuyu Başlat
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Erdemli CRM Bot ${PORT} portunda başarıyla çalışıyor.`));
