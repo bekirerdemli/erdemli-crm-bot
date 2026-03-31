@@ -41,6 +41,7 @@ const URLS = {
     makinalar:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1621316106`,
     polyfill:       `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=174636469`,
     islemler:       `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=1884664027`,
+    bakiye:         `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=754315254`,
 };
 
 function parseCSV(text) {
@@ -136,6 +137,7 @@ function musteriFiltrele(data, cariAdi) {
         acikSiparisler: (data.acikSiparisler || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || r['CARİ ADI'] || '').toUpperCase().includes(cu)),
         eksikJant:      (data.eksikJant      || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || r['CARİ ADI'] || '').toUpperCase().includes(cu)),
         islemler:       (data.islemler       || []).filter(r => (r['Frma'] || r['Firma'] || '').toUpperCase().includes(cu)),
+        bakiye:         (data.bakiye         || []).filter(r => (r['Frma'] || '').toUpperCase().includes(cu)),
     };
 }
 
@@ -184,6 +186,10 @@ ${JSON.stringify(mv.eksikJant)}
 ${cariAdi} - FATURA / ODEME ISLEMLERI:
 ${JSON.stringify(mv.islemler)}
 
+${cariAdi} - BORÇ BAKİYE DURUMU:
+Sütunlar: Frma | SUM/Tutar (toplam satış) | SUM/Tahsilat (toplam ödeme) | Toplam Bakiye (net borç) | Vadeli Ciro | Vadesi Geçmiş Bakiye | Kalan Vade Gün
+${JSON.stringify(mv.bakiye)}
+
 MAKINA - TEKERLEK REHBERI (Genel bilgi):
 ${JSON.stringify(data.makinalar || [])}
 
@@ -206,7 +212,11 @@ YANIT KURALLARI:
 4. Eksik jant sorusunda: Eksik Jant tablosuna bak.
 5. Fiyat sorusunda: once bu musteriye ozel Anlasilan Fiyat sutununa bak, yoksa genel fiyat listesini kullan.
 6. Makina veya polyfill sorulari genel bilgidir, herkese verebilirsin.
-7. Bakiye/borc sorusunda: Fatura/Odeme Islemleri tablosuna bak ve ozet ver.
+7. Bakiye/borç sorusunda: ÖNCE "Borç Bakiye Durumu" tablosuna bak. 
+   - "Toplam Bakiye" = net borç miktarı
+   - "Vadesi Geçmiş Bakiye" = vadesi dolmuş borç
+   - "Kalan Vade Gün" = vadeye kaç gün kaldığı
+   - Tüm bu bilgileri açıkça belirt.
 8. Cevapta veri YOKSA: "Yetkiliye aktariyorum, en kisa surede donus yapacaklar."
 9. Bilinmeyen Musteri ise: "Sisteminizde kaydinizi bulamadim, yetkili ile iletisime geciniz: 0555 016 16 00"
 10. Kisa, samimi ve profesyonel Turkce kullan.`;
