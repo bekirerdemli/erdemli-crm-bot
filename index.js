@@ -129,7 +129,7 @@ app.post('/webhook', async (req, res) => {
             return cariAdi !== "Bilinmeyen Müşteri" && islemFirma.toUpperCase().includes(cariAdi.toUpperCase());
         });
 
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-04-17" }); // Pro yerine daha hızlı olan flash modeline geçtik
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Pro yerine daha hızlı olan flash modeline geçtik
 
         const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka müşteri temsilcisisin.
         Şu an sana mesaj yazan numara: +${sender}
