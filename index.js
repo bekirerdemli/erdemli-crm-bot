@@ -8,21 +8,14 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// --- TEŞHİS MODU: GELEN HER İSTEĞİ YAZDIRIR ---
 app.use((req, res, next) => {
     console.log(`\n[${new Date().toLocaleTimeString()}] SİSTEME İSTEK GELDİ: ${req.method} ${req.path}`);
-    if (req.method === 'POST') {
-        console.log('GELEN VERİ (BODY):', req.body);
-    }
+    if (req.method === 'POST') console.log('GELEN VERİ (BODY):', req.body);
     next();
 });
 
-// Fonnte'nin URL doğrulaması için GET metodu
-app.get('/webhook', (req, res) => {
-    res.status(200).send("Webhook aktif ve calisiyor");
-});
+app.get('/webhook', (req, res) => res.status(200).send("Webhook aktif ve calisiyor"));
 
-// Kullanılabilir modelleri listele
 app.get('/modeller', async (req, res) => {
     try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
@@ -31,20 +24,25 @@ app.get('/modeller', async (req, res) => {
             .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
             .map(m => m.name.replace('models/', ''));
         res.json({ modeller: destekli });
-    } catch(e) {
-        res.json({ hata: e.message });
-    }
+    } catch(e) { res.json({ hata: e.message }); }
 });
 
-// --- API ve Token Ayarları ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
+const SID = '1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M';
+const IID = '1aHKb7lv6sei2ExnIB5Li0pEtygRo3hWLxTJGiHbda0g';
 
-const URL_CARILER = 'https://docs.google.com/spreadsheets/d/1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M/export?format=csv&gid=1423089940';
-const URL_URUNLER = 'https://docs.google.com/spreadsheets/d/1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M/export?format=csv&gid=1263788777';
-const URL_ISLEMLER = 'https://docs.google.com/spreadsheets/d/1aHKb7lv6sei2ExnIB5Li0pEtygRo3hWLxTJGiHbda0g/export?format=csv&gid=1884664027';
+const URLS = {
+    cariler:        `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1423089940`,
+    urunler:        `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1263788777`,
+    siparisler:     `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=748556980`,
+    acikSiparisler: `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1995109523`,
+    eksikJant:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1586553902`,
+    makinalar:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1621316106`,
+    polyfill:       `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=174636469`,
+    islemler:       `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=1884664027`,
+};
 
-// --- Dahili CSV Ayrıştırıcı ---
 function parseCSV(text) {
     const lines = text.split('\n');
     if (!lines.length) return [];
@@ -62,8 +60,7 @@ function parseCSV(text) {
 }
 
 function splitRow(line) {
-    const result = [];
-    let cur = '', inQ = false;
+    const result = []; let cur = '', inQ = false;
     for (let i = 0; i < line.length; i++) {
         const c = line[i];
         if (c === '"') { inQ = !inQ; continue; }
@@ -75,99 +72,119 @@ function splitRow(line) {
 }
 
 async function fetchAllData() {
-    const [resCariler, resUrunler, resIslemler] = await Promise.all([
-        axios.get(URL_CARILER),
-        axios.get(URL_URUNLER),
-        axios.get(URL_ISLEMLER)
-    ]);
-    return {
-        cariler: parseCSV(resCariler.data),
-        urunler: parseCSV(resUrunler.data),
-        islemler: parseCSV(resIslemler.data)
-    };
+    const results = await Promise.allSettled(
+        Object.entries(URLS).map(([key, url]) =>
+            axios.get(url).then(r => ({ key, data: parseCSV(r.data) }))
+        )
+    );
+    const data = {};
+    results.forEach(r => {
+        if (r.status === 'fulfilled') data[r.value.key] = r.value.data;
+        else data[r.value?.key || 'hata'] = [];
+    });
+    return data;
 }
 
 function cleanPhone(phone) {
-    if (!phone) return "";
+    if (!phone) return '';
     let p = String(phone).replace(/[^0-9]/g, '');
-    // 12 haneden uzunsa (ornegin 62905... -> 14 hane) son 12 haneyi al
     if (p.length > 12) p = p.slice(-12);
-    // 0 ile basliyorsa 90 ekle
     if (p.startsWith('0')) p = '90' + p.substring(1);
-    // Hala 90 ile baslamiyorsa basa 90 ekle
     if (!p.startsWith('90')) p = '90' + p;
     return p;
 }
 
-// --- Fonnte Webhook Dinleyici ---
+function musteriFiltrele(data, cariAdi) {
+    if (cariAdi === 'Bilinmeyen Musteri') return {};
+    const cu = cariAdi.toUpperCase();
+    return {
+        siparisler:     (data.siparisler     || []).filter(r => (r['Cari Adi']  || '').toUpperCase().includes(cu)),
+        acikSiparisler: (data.acikSiparisler || []).filter(r => (r['Cari Adi']  || '').toUpperCase().includes(cu)),
+        eksikJant:      (data.eksikJant      || []).filter(r => (r['Cari Adi']  || '').toUpperCase().includes(cu)),
+        islemler:       (data.islemler       || []).filter(r => (r['Frma'] || r['Firma'] || '').toUpperCase().includes(cu)),
+    };
+}
+
 app.post('/webhook', async (req, res) => {
-    res.status(200).send({ status: true }); // Fonnte'ye anında "aldım" diyoruz
-
-    // Fonnte bazen 'message' yerine 'text' kullanabilir, ikisine de bakalım
-    const sender = req.body.sender;
+    res.status(200).send({ status: true });
+    const sender  = req.body.sender;
     const message = req.body.message || req.body.text;
-
-    if (!sender || !message) {
-        console.log("⚠️ UYARI: Gönderen numarası veya mesaj metni bulunamadı. (Sistem mesajı olabilir)");
-        return;
-    }
+    if (!sender || !message) { console.log('Sender veya mesaj yok'); return; }
 
     try {
-        console.log(`\n💬 İŞLEME ALINIYOR -> Numara: ${sender} | Mesaj: ${message}`);
-
-        const { cariler, urunler, islemler } = await fetchAllData();
+        console.log(`\n💬 ${sender} | ${message}`);
+        const data = await fetchAllData();
         const senderClean = cleanPhone(sender);
-        let cariAdi = "Bilinmeyen Müşteri";
-        
-        const musteri = cariler.find(c => cleanPhone(c['TELEFON'] || '') === senderClean);
-        if (musteri) {
-            cariAdi = musteri['ÜNVANI 1'] || musteri['Cari Adı'] || "Bilinmeyen Müşteri";
-        }
 
-        const musteriIslemleri = islemler.filter(islem => {
-            const islemFirma = islem['Frma'] || islem['Firma'] || '';
-            return cariAdi !== "Bilinmeyen Müşteri" && islemFirma.toUpperCase().includes(cariAdi.toUpperCase());
-        });
+        const musteri = (data.cariler || []).find(c => cleanPhone(c['TELEFON'] || '') === senderClean);
+        let cariAdi = 'Bilinmeyen Musteri';
+        if (musteri) cariAdi = musteri['UNVANI 1'] || musteri['Cari Adi'] || 'Bilinmeyen Musteri';
 
-        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" }); // Pro yerine daha hızlı olan flash modeline geçtik
+        const mv = musteriFiltrele(data, cariAdi);
 
-        const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka müşteri temsilcisisin.
-        Şu an sana mesaj yazan numara: +${sender}
-        Veritabanımızdaki Cari Adı: ${cariAdi}
+        const prompt = `Sen "Erdemli Kaucuk - Omer Erdemli" firmasinin resmi WhatsApp yapay zeka asistanisin.
+Sana mesaj yazan: +${sender} | Sistemdeki Cari Adi: ${cariAdi}
 
-        BİZİM SATTIĞIMIZ LASTİKLER VE FİYATLARI:
-        ${JSON.stringify(urunler.slice(0, 50))}
+GIZLILIK: Asagidaki veriler YALNIZCA ${cariAdi} firmasina aittir. Baska hicbir firmanin bilgisini paylasma.
 
-        MÜŞTERİNİN KENDİ GEÇMİŞ İŞLEMLERİ (Ödemeler, faturalar, alınan lastikler):
-        ${JSON.stringify(musteriIslemleri)}
+URUN FIYAT LISTESI:
+${JSON.stringify((data.urunler || []).slice(0, 60))}
 
-        Müşterinin Mesajı: "${message}"
+${cariAdi} - SIPARIS GECMISI:
+Sutunlar: ID | Kayit Tarihi | Cari Adi | Uretim Modeli | Islem Tipi | Siparis Adeti |
+Jant Teslim Alma Tarihi | Jant Teslim Alma | Jant Kontrol | Teslim Etme Tarihi |
+Teslim Edilen | Kalan | Uretim Sayisi | Tekerlek Tanimi | Anlasilan Fiyat | Aciklama
+${JSON.stringify(mv.siparisler)}
 
-        KURALLAR:
-        1. Sadece "LASTİKLER VE FİYATLARI" ve "GEÇMİŞ İŞLEMLERİ" listelerine bakarak cevap ver.
-        2. Müşteri faturasını veya bakiyesini sorarsa sadece onun verisine bak. Başkasına bilgi verme.
-        3. Sorunun cevabı verilerde YOKSA, SADECE şunu söyle: "Yetkiliye aktarıyorum, size en kısa zamanda dönüş yapacaklar."
-        4. Kısa, samimi ve net bir profesyonel dil kullan.`;
+${cariAdi} - ACIK BEKLEYEN SIPARISLER:
+Sutunlar: ID | Tekerlek Tanimi | Cari Adi | Kayit Tarihi | Jant Teslim Alma Tarihi | Uretim Sayisi | Gecen Gun Sayisi | Sehir
+${JSON.stringify(mv.acikSiparisler)}
 
-        console.log("🧠 Yapay Zeka düşünülüyor...");
+${cariAdi} - EKSIK JANT DURUMU:
+Sutunlar: Cari Adi | ID | Tekerlek Tanimi | Kayit Tarihi | Jant Kontrol | Alinacak Jant | Gecen Gun Sayisi | Sehir
+${JSON.stringify(mv.eksikJant)}
+
+${cariAdi} - FATURA / ODEME ISLEMLERI:
+${JSON.stringify(mv.islemler)}
+
+MAKINA - TEKERLEK REHBERI (Genel bilgi):
+${JSON.stringify((data.makinalar || []).slice(0, 30))}
+
+POLYFILL DOLUM TABLOSU (Genel bilgi):
+${JSON.stringify((data.polyfill || []).slice(0, 30))}
+
+MUSTERININ MESAJI: "${message}"
+
+YANIT KURALLARI:
+1. YALNIZCA ${cariAdi} firmasinin verilerini kullan. Baska firma verisi ASLA paylasma.
+2. Siparis durumu: siparis adeti, teslim edilen, kalan ve anlasilan fiyata bak.
+3. Acik siparis sorusunda: Acik Siparisler tablosuna bak, kac gundir beklemis bilgisini de ver.
+4. Eksik jant sorusunda: Eksik Jant tablosuna bak.
+5. Fiyat sorusunda: once bu musteriye ozel Anlasilan Fiyat sutununa bak, yoksa genel fiyat listesini kullan.
+6. Makina veya polyfill sorulari genel bilgidir, herkese verebilirsin.
+7. Bakiye/borc sorusunda: Fatura/Odeme Islemleri tablosuna bak ve ozet ver.
+8. Cevapta veri YOKSA: "Yetkiliye aktariyorum, en kisa surede donus yapacaklar."
+9. Bilinmeyen Musteri ise: "Sisteminizde kaydinizi bulamadim, yetkili ile iletisime geciniz: 0555 016 16 00"
+10. Kisa, samimi ve profesyonel Turkce kullan.`;
+
+        console.log('🧠 Yapay Zeka dusunuyor...');
+        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
-        console.log("✅ Yapay Zeka Cevabı Üretti:", aiResponse);
+        console.log('✅ Cevap:', aiResponse);
 
         await axios.post('https://api.fonnte.com/send', {
             target: sender,
             message: aiResponse,
             countryCode: '0'
-        }, {
-            headers: { 'Authorization': FONNTE_TOKEN }
-        });
+        }, { headers: { 'Authorization': FONNTE_TOKEN } });
 
-        console.log(`🚀 CEVAP GÖNDERİLDİ -> ${sender}`);
+        console.log(`🚀 GONDERILDI -> ${sender}`);
 
     } catch (error) {
-        console.error("❌ Bot çalışma hatası:", error.message || error);
+        console.error('❌ Hata:', error.message || error);
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Erdemli CRM Bot ${PORT} portunda başarıyla çalışıyor.`));
+app.listen(PORT, () => console.log(`Erdemli CRM Bot ${PORT} portunda basariyla calisiyor.`));
