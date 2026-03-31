@@ -94,6 +94,40 @@ function cleanPhone(phone) {
     return p;
 }
 
+// Lastik ölçüsünü normalize et: 10x16,5 / 10-16.5 / 10/16.5 hepsi aynı
+function normalizeOlcu(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/[xX\/\-\s]/g, '.')
+        .replace(/,/g, '.')
+        .trim()
+        .toLowerCase();
+}
+
+// Polyfill tablosunda lastik ölçüsüne göre ara
+function polyfillAra(polyfillData, aranan) {
+    const arananNorm = normalizeOlcu(aranan);
+    if (!arananNorm) return [];
+    
+    // Önce tam eşleşme dene
+    let bulunan = (polyfillData || []).filter(r => {
+        const lastik = normalizeOlcu(r['Lastik Olcusu'] || r['Lastik Ölçüsü'] || '');
+        const jant   = normalizeOlcu(r['Jant Olcusu']  || r['Jant Ölçüsü']   || '');
+        return lastik === arananNorm || jant === arananNorm;
+    });
+    
+    // Tam eşleşme yoksa içinde geçen var mı diye bak
+    if (!bulunan.length) {
+        bulunan = (polyfillData || []).filter(r => {
+            const lastik = normalizeOlcu(r['Lastik Olcusu'] || r['Lastik Ölçüsü'] || '');
+            const jant   = normalizeOlcu(r['Jant Olcusu']  || r['Jant Ölçüsü']   || '');
+            return lastik.includes(arananNorm) || arananNorm.includes(lastik) ||
+                   jant.includes(arananNorm)   || arananNorm.includes(jant);
+        });
+    }
+    return bulunan;
+}
+
 function musteriFiltrele(data, cariAdi) {
     if (cariAdi === 'Bilinmeyen Musteri') return {};
     const cu = cariAdi.toUpperCase();
@@ -122,13 +156,16 @@ app.post('/webhook', async (req, res) => {
 
         const mv = musteriFiltrele(data, cariAdi);
 
+        // Mesajdan olcu araması yap
+        const polyfillSonuc = polyfillAra(data.polyfill, message);
+        
         const prompt = `Sen "Erdemli Kaucuk - Omer Erdemli" firmasinin resmi WhatsApp yapay zeka asistanisin.
 Sana mesaj yazan: +${sender} | Sistemdeki Cari Adi: ${cariAdi}
 
 GIZLILIK: Asagidaki veriler YALNIZCA ${cariAdi} firmasina aittir. Baska hicbir firmanin bilgisini paylasma.
 
 URUN FIYAT LISTESI:
-${JSON.stringify((data.urunler || []).slice(0, 60))}
+${JSON.stringify(data.urunler || [])}
 
 ${cariAdi} - SIPARIS GECMISI:
 Sutunlar: ID | Kayit Tarihi | Cari Adi | Uretim Modeli | Islem Tipi | Siparis Adeti |
@@ -148,12 +185,19 @@ ${cariAdi} - FATURA / ODEME ISLEMLERI:
 ${JSON.stringify(mv.islemler)}
 
 MAKINA - TEKERLEK REHBERI (Genel bilgi):
-${JSON.stringify((data.makinalar || []).slice(0, 30))}
+${JSON.stringify(data.makinalar || [])}
 
-POLYFILL DOLUM TABLOSU (Genel bilgi):
-${JSON.stringify((data.polyfill || []).slice(0, 30))}
+POLYFILL DOLUM TABLOSU (Genel bilgi - ${(data.polyfill||[]).length} kayit mevcut):
+Kullanicinin mesajinda gecen olculer icin arama yapildi:
+${JSON.stringify(polyfillSonuc)}
+Tam liste istersen yetkiliye sor diyebilirsin.
 
 MUSTERININ MESAJI: "${message}"
+
+FORMAT NORMALIZASYON - Kullanici lastik olcusu yazarken farkli ayiraclar kullanabilir:
+- "10x16,5" = "10-16.5" = "10/16.5" = "10 16.5" hepsi ayni olcudur
+- Nokta ve virgul esit: "16,5" = "16.5"
+- Arama yaparken bu farklilikları goz ardi et, anlam olarak eslesmeye calis
 
 YANIT KURALLARI:
 1. YALNIZCA ${cariAdi} firmasinin verilerini kullan. Baska firma verisi ASLA paylasma.
