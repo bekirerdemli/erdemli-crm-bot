@@ -22,6 +22,20 @@ app.get('/webhook', (req, res) => {
     res.status(200).send("Webhook aktif ve calisiyor");
 });
 
+// Kullanılabilir modelleri listele
+app.get('/modeller', async (req, res) => {
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
+        const r = await axios.get(url);
+        const destekli = r.data.models
+            .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+            .map(m => m.name.replace('models/', ''));
+        res.json({ modeller: destekli });
+    } catch(e) {
+        res.json({ hata: e.message });
+    }
+});
+
 // --- API ve Token Ayarları ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
@@ -115,7 +129,7 @@ app.post('/webhook', async (req, res) => {
             return cariAdi !== "Bilinmeyen Müşteri" && islemFirma.toUpperCase().includes(cariAdi.toUpperCase());
         });
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Pro yerine daha hızlı olan flash modeline geçtik
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-04-17" }); // Pro yerine daha hızlı olan flash modeline geçtik
 
         const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka müşteri temsilcisisin.
         Şu an sana mesaj yazan numara: +${sender}
