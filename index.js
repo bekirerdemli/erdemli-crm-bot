@@ -132,9 +132,9 @@ function musteriFiltrele(data, cariAdi) {
     if (cariAdi === 'Bilinmeyen Musteri') return {};
     const cu = cariAdi.toUpperCase();
     return {
-        siparisler:     (data.siparisler     || []).filter(r => (r['Cari Adi']  || '').toUpperCase().includes(cu)),
-        acikSiparisler: (data.acikSiparisler || []).filter(r => (r['Cari Adi']  || '').toUpperCase().includes(cu)),
-        eksikJant:      (data.eksikJant      || []).filter(r => (r['Cari Adi']  || '').toUpperCase().includes(cu)),
+        siparisler:     (data.siparisler     || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || r['CARİ ADI'] || '').toUpperCase().includes(cu)),
+        acikSiparisler: (data.acikSiparisler || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || r['CARİ ADI'] || '').toUpperCase().includes(cu)),
+        eksikJant:      (data.eksikJant      || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || r['CARİ ADI'] || '').toUpperCase().includes(cu)),
         islemler:       (data.islemler       || []).filter(r => (r['Frma'] || r['Firma'] || '').toUpperCase().includes(cu)),
     };
 }
@@ -152,7 +152,7 @@ app.post('/webhook', async (req, res) => {
 
         const musteri = (data.cariler || []).find(c => cleanPhone(c['TELEFON'] || '') === senderClean);
         let cariAdi = 'Bilinmeyen Musteri';
-        if (musteri) cariAdi = musteri['UNVANI 1'] || musteri['Cari Adi'] || 'Bilinmeyen Musteri';
+        if (musteri) cariAdi = musteri['ÜNVANI 1'] || musteri['Cari Adı'] || 'Bilinmeyen Musteri';
 
         const mv = musteriFiltrele(data, cariAdi);
 
