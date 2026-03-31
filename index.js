@@ -76,7 +76,11 @@ async function fetchAllData() {
 function cleanPhone(phone) {
     if (!phone) return "";
     let p = String(phone).replace(/[^0-9]/g, '');
-    if (p.startsWith('0')) p = p.substring(1);
+    // 12 haneden uzunsa (ornegin 62905... -> 14 hane) son 12 haneyi al
+    if (p.length > 12) p = p.slice(-12);
+    // 0 ile basliyorsa 90 ekle
+    if (p.startsWith('0')) p = '90' + p.substring(1);
+    // Hala 90 ile baslamiyorsa basa 90 ekle
     if (!p.startsWith('90')) p = '90' + p;
     return p;
 }
@@ -139,7 +143,7 @@ app.post('/webhook', async (req, res) => {
         await axios.post('https://api.fonnte.com/send', {
             target: sender,
             message: aiResponse,
-            countryCode: '90'
+            countryCode: '0'
         }, {
             headers: { 'Authorization': FONNTE_TOKEN }
         });
