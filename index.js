@@ -183,6 +183,9 @@ GİZLİLİK KURALI: Aşağıdaki müşteriye özel veriler YALNIZCA ${cariAdi} f
 ${teknikMetin}
 
 ━━━ ÜRÜN FİYAT LİSTESİ ━━━
+Sütunlar: Tekerlek Tanımı | kaplama (USD) | sıfır jant (USD)
+Fiyat sorusunda: kaplama = müşteri kendi jantını getirdiğinde, sıfır jant = yeni jantla birlikte teslim edildiğinde.
+Her zaman USD birimi ile belirt.
 ${JSON.stringify(data.urunler || [])}
 
 ━━━ POLYFİLL ARAMA SONUCU (Mesajdaki ölçü için) ━━━
@@ -219,6 +222,7 @@ ${JSON.stringify(mv.bakiye)}
 3. TEKNİK sorularda (lastik ölçüsü, polyfill, makina-lastik uyumu vb.) Teknik Bilgi Tabanını kullan. Bu bilgiler herkese verilebilir.
 4. MÜŞTERİYE ÖZEL sorularda (sipariş, bakiye, fiyat) YALNIZCA bu müşterinin verilerini kullan. Başka firma verisi ASLA paylaşma.
 5. Borç/bakiye sorusunda: Toplam Bakiye, Vadesi Geçmiş Bakiye ve Vade Gün bilgilerini açıkça belirt.
+5b. Fiyat sorusunda: Önce müşteriye özel "Anlaşılan Fiyat" sütununa bak. Yoksa fiyat listesindeki "kaplama" ve "sıfır jant" fiyatlarını AYRI AYRI göster. Her zaman USD birimi ile belirt. Örn: Kaplama: $65 USD | Sıfır Jant: $85 USD. Kaplama = müşteri kendi jantını getirir. Sıfır Jant = jant dahil fiyat.
 6. Sipariş sorusunda: Sipariş adeti, teslim edilen, kalan ve anlaşılan fiyatı belirt.
 7. Açık sipariş sorusunda: Kaç gündür beklediğini de söyle.
 8. Polyfill/dolum sorusunda: Polyfill Arama Sonucunu kullan, ölçü formatı farklı olsa bile (x, -, /, virgül, nokta) aynı ölçü olarak değerlendir.
