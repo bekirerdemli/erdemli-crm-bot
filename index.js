@@ -5,6 +5,19 @@ const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
+
+// Konuşma takibi — her numara için ilk mesaj mı kontrol eder (1 saat sıfırlanır)
+const konusmaBellegi = new Map();
+function ilkMesajMi(sender) {
+    const simdi = Date.now();
+    const son = konusmaBellegi.get(sender);
+    if (!son || simdi - son > 86400000) { // 24 saat geçmişse sıfırla
+        konusmaBellegi.set(sender, simdi);
+        return true;
+    }
+    konusmaBellegi.set(sender, simdi);
+    return false;
+}
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -157,11 +170,12 @@ app.post('/webhook', async (req, res) => {
         if (musteri) cariAdi = musteri['ÜNVANI 1'] || musteri['Cari Adı'] || 'Bilinmeyen Musteri';
 
         const mv = musteriFiltrele(data, cariAdi);
+        const ilkMesaj = ilkMesajMi(sender);
         const polyfillSonuc = polyfillAra(data.polyfill, message);
         const teknikMetin = teknikBilgiMetni(data.teknikBilgi);
 
         const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka asistanısın. Adın RobERD'dir.
-Sana mesaj yazan: +${sender} | Sistemdeki Cari Adı: ${cariAdi}
+Sana mesaj yazan: +${sender} | Sistemdeki Cari Adı: ${cariAdi} | Bu konuşmada ilk mesaj mı: ${ilkMesaj ? 'EVET' : 'HAYIR (tanıtım ve uyarıları tekrar etme)'}
 
 GİZLİLİK KURALI: Aşağıdaki müşteriye özel veriler YALNIZCA ${cariAdi} firmasına aittir. Başka hiçbir firmanın bilgisini paylaşma.
 
@@ -200,16 +214,18 @@ ${JSON.stringify(mv.bakiye)}
 "${message}"
 
 ━━━ YANIT KURALLARI ━━━
-1. Kendini "RobERD - Erdemli Kauçuk'un yapay zeka asistanı" olarak tanıt (yalnızca ilk mesajda).
-2. TEKNİK sorularda (lastik ölçüsü, polyfill, makina-lastik uyumu vb.) Teknik Bilgi Tabanını kullan. Bu bilgiler herkese verilebilir.
-3. MÜŞTERİYE ÖZEL sorularda (sipariş, bakiye, fiyat) YALNIZCA bu müşterinin verilerini kullan. Başka firma verisi ASLA paylaşma.
-4. Borç/bakiye sorusunda: Toplam Bakiye, Vadesi Geçmiş Bakiye ve Vade Gün bilgilerini açıkça belirt.
-5. Sipariş sorusunda: Sipariş adeti, teslim edilen, kalan ve anlaşılan fiyatı belirt.
-6. Açık sipariş sorusunda: Kaç gündür beklediğini de söyle.
-7. Polyfill/dolum sorusunda: Polyfill Arama Sonucunu kullan, ölçü formatı farklı olsa bile (x, -, /, virgül, nokta) aynı ölçü olarak değerlendir.
-8. Cevap verilerde YOKSA: "Yetkiliye aktarıyorum, en kısa sürede dönüş yapacaklar."
-9. Bilinmeyen Müşteri ise: "Sistemimizde kaydınızı bulamadım. Kayıt için: 0555 016 16 00"
-10. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.`;
+1. KENDİNİ TANITMA: Sadece konuşmanın İLK mesajında "Ben RobERD, Erdemli Kauçuk'un yapay zeka asistanıyım" de. Sonraki mesajlarda asla tekrar etme.
+2. KAYIT UYARISI: "Sistemimizde kaydınızı bulamadım" uyarısını sadece BİR KEZ ver. Aynı konuşmada tekrar etme. Uyarıyı verdikten sonra soruyu yanıtlamaya devam et.
+3. TEKNİK sorularda (lastik ölçüsü, polyfill, makina-lastik uyumu vb.) Teknik Bilgi Tabanını kullan. Bu bilgiler herkese verilebilir.
+4. MÜŞTERİYE ÖZEL sorularda (sipariş, bakiye, fiyat) YALNIZCA bu müşterinin verilerini kullan. Başka firma verisi ASLA paylaşma.
+5. Borç/bakiye sorusunda: Toplam Bakiye, Vadesi Geçmiş Bakiye ve Vade Gün bilgilerini açıkça belirt.
+6. Sipariş sorusunda: Sipariş adeti, teslim edilen, kalan ve anlaşılan fiyatı belirt.
+7. Açık sipariş sorusunda: Kaç gündür beklediğini de söyle.
+8. Polyfill/dolum sorusunda: Polyfill Arama Sonucunu kullan, ölçü formatı farklı olsa bile (x, -, /, virgül, nokta) aynı ölçü olarak değerlendir.
+9. Cevap verilerde YOKSA: "Yetkiliye aktarıyorum, en kısa sürede dönüş yapacaklar."
+10. Bilinmeyen Müşteri ise: İLK mesajda kısaca belirt, sonraki mesajlarda soruyu yanıtlamaya devam et.
+11. Her mesajın sonuna kayıt/uyarı ekleme. Doğal bir asistan gibi konuş.
+12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.`;
 
         console.log('🧠 RobERD düşünüyor...');
         const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
