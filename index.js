@@ -8,29 +8,42 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// --- TEŞHİS MODU: GELEN HER İSTEĞİ YAZDIRIR ---
 app.use((req, res, next) => {
     console.log(`\n[${new Date().toLocaleTimeString()}] SİSTEME İSTEK GELDİ: ${req.method} ${req.path}`);
-    if (req.method === 'POST') {
-        console.log('GELEN VERİ (BODY):', req.body);
-    }
+    if (req.method === 'POST') console.log('GELEN VERİ:', req.body);
     next();
 });
 
-// Fonnte'nin URL doğrulaması için GET metodu
-app.get('/webhook', (req, res) => {
-    res.status(200).send("Webhook aktif ve calisiyor");
+app.get('/webhook', (req, res) => res.status(200).send("Webhook aktif ve calisiyor"));
+
+app.get('/modeller', async (req, res) => {
+    try {
+        const r = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
+        const destekli = r.data.models
+            .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+            .map(m => m.name.replace('models/', ''));
+        res.json({ modeller: destekli });
+    } catch(e) { res.json({ hata: e.message }); }
 });
 
-// --- API ve Token Ayarları ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
+const SID = '1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M';
+const IID = '1aHKb7lv6sei2ExnIB5Li0pEtygRo3hWLxTJGiHbda0g';
 
-const URL_CARILER = 'https://docs.google.com/spreadsheets/d/1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M/export?format=csv&gid=1423089940';
-const URL_URUNLER = 'https://docs.google.com/spreadsheets/d/1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M/export?format=csv&gid=1263788777';
-const URL_ISLEMLER = 'https://docs.google.com/spreadsheets/d/1aHKb7lv6sei2ExnIB5Li0pEtygRo3hWLxTJGiHbda0g/export?format=csv&gid=1884664027';
+const URLS = {
+    cariler:        `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1423089940`,
+    urunler:        `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1263788777`,
+    siparisler:     `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=748556980`,
+    acikSiparisler: `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1995109523`,
+    eksikJant:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1586553902`,
+    makinalar:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1621316106`,
+    polyfill:       `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=174636469`,
+    teknikBilgi:    `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1461616374`,
+    islemler:       `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=1884664027`,
+    bakiye:         `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=754315254`,
+};
 
-// --- Dahili CSV Ayrıştırıcı ---
 function parseCSV(text) {
     const lines = text.split('\n');
     if (!lines.length) return [];
@@ -48,8 +61,7 @@ function parseCSV(text) {
 }
 
 function splitRow(line) {
-    const result = [];
-    let cur = '', inQ = false;
+    const result = []; let cur = '', inQ = false;
     for (let i = 0; i < line.length; i++) {
         const c = line[i];
         if (c === '"') { inQ = !inQ; continue; }
@@ -61,99 +73,162 @@ function splitRow(line) {
 }
 
 async function fetchAllData() {
-    const [resCariler, resUrunler, resIslemler] = await Promise.all([
-        axios.get(URL_CARILER),
-        axios.get(URL_URUNLER),
-        axios.get(URL_ISLEMLER)
-    ]);
-    return {
-        cariler: parseCSV(resCariler.data),
-        urunler: parseCSV(resUrunler.data),
-        islemler: parseCSV(resIslemler.data)
-    };
+    const results = await Promise.allSettled(
+        Object.entries(URLS).map(([key, url]) =>
+            axios.get(url).then(r => ({ key, data: parseCSV(r.data) }))
+        )
+    );
+    const data = {};
+    results.forEach(r => {
+        if (r.status === 'fulfilled') data[r.value.key] = r.value.data;
+    });
+    return data;
 }
 
 function cleanPhone(phone) {
-    if (!phone) return "";
+    if (!phone) return '';
     let p = String(phone).replace(/[^0-9]/g, '');
-    if (p.startsWith('0')) p = p.substring(1);
+    if (p.length > 12) p = p.slice(-12);
+    if (p.startsWith('0')) p = '90' + p.substring(1);
     if (!p.startsWith('90')) p = '90' + p;
     return p;
 }
 
-// --- Fonnte Webhook Dinleyici ---
-app.post('/webhook', async (req, res) => {
-    res.status(200).send({ status: true }); // Fonnte'ye anında "aldım" diyoruz
+function normalizeOlcu(str) {
+    if (!str) return '';
+    return String(str).replace(/[xX\/\-\s]/g, '.').replace(/,/g, '.').trim().toLowerCase();
+}
 
-    // Fonnte bazen 'message' yerine 'text' kullanabilir, ikisine de bakalım
-    const sender = req.body.sender;
-    const message = req.body.message || req.body.text;
-
-    if (!sender || !message) {
-        console.log("⚠️ UYARI: Gönderen numarası veya mesaj metni bulunamadı. (Sistem mesajı olabilir)");
-        return;
+function polyfillAra(polyfillData, aranan) {
+    const norm = normalizeOlcu(aranan);
+    if (!norm) return [];
+    let bulunan = (polyfillData || []).filter(r => {
+        const lastik = normalizeOlcu(r['Lastik Ölçüsü'] || r['Lastik Olcusu'] || '');
+        const jant   = normalizeOlcu(r['Jant Ölçüsü']  || r['Jant Olcusu']  || '');
+        return lastik === norm || jant === norm;
+    });
+    if (!bulunan.length) {
+        bulunan = (polyfillData || []).filter(r => {
+            const lastik = normalizeOlcu(r['Lastik Ölçüsü'] || r['Lastik Olcusu'] || '');
+            const jant   = normalizeOlcu(r['Jant Ölçüsü']  || r['Jant Olcusu']  || '');
+            return lastik.includes(norm) || norm.includes(lastik) ||
+                   jant.includes(norm)   || norm.includes(jant);
+        });
     }
+    return bulunan;
+}
+
+function musteriFiltrele(data, cariAdi) {
+    if (cariAdi === 'Bilinmeyen Musteri') return {};
+    const cu = cariAdi.toUpperCase();
+    return {
+        siparisler:     (data.siparisler     || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || '').toUpperCase().includes(cu)),
+        acikSiparisler: (data.acikSiparisler || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || '').toUpperCase().includes(cu)),
+        eksikJant:      (data.eksikJant      || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || '').toUpperCase().includes(cu)),
+        islemler:       (data.islemler       || []).filter(r => (r['Frma'] || r['Firma'] || '').toUpperCase().includes(cu)),
+        bakiye:         (data.bakiye         || []).filter(r => (r['Frma'] || '').toUpperCase().includes(cu)),
+    };
+}
+
+// Teknik bilgiyi okunabilir metne çevir
+function teknikBilgiMetni(teknikData) {
+    if (!teknikData || !teknikData.length) return '';
+    return teknikData.map(r => `• ${r['KONU'] || ''}: ${r['AÇIKLAMA'] || ''}`).join('\n');
+}
+
+app.post('/webhook', async (req, res) => {
+    res.status(200).send({ status: true });
+    const sender  = req.body.sender;
+    const message = req.body.message || req.body.text;
+    if (!sender || !message) { console.log('Sender veya mesaj yok'); return; }
 
     try {
-        console.log(`\n💬 İŞLEME ALINIYOR -> Numara: ${sender} | Mesaj: ${message}`);
-
-        const { cariler, urunler, islemler } = await fetchAllData();
+        console.log(`\n💬 ${sender} | ${message}`);
+        const data = await fetchAllData();
         const senderClean = cleanPhone(sender);
-        let cariAdi = "Bilinmeyen Müşteri";
-        
-        // Virgülle ayrılmış birden fazla telefon numarasını destekle
-        const musteri = cariler.find(c => {
+
+        // Virgülle ayrılmış birden fazla telefonu destekle
+        const musteri = (data.cariler || []).find(c => {
             const telefonlar = (c['TELEFON'] || '').split(',').map(t => cleanPhone(t.trim())).filter(Boolean);
             return telefonlar.includes(senderClean);
         });
-        if (musteri) {
-            cariAdi = musteri['ÜNVANI 1'] || musteri['Cari Adı'] || "Bilinmeyen Müşteri";
-        }
 
-        const musteriIslemleri = islemler.filter(islem => {
-            const islemFirma = islem['Frma'] || islem['Firma'] || '';
-            return cariAdi !== "Bilinmeyen Müşteri" && islemFirma.toUpperCase().includes(cariAdi.toUpperCase());
-        });
+        let cariAdi = 'Bilinmeyen Musteri';
+        if (musteri) cariAdi = musteri['ÜNVANI 1'] || musteri['Cari Adı'] || 'Bilinmeyen Musteri';
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Pro yerine daha hızlı olan flash modeline geçtik
+        const mv = musteriFiltrele(data, cariAdi);
+        const polyfillSonuc = polyfillAra(data.polyfill, message);
+        const teknikMetin = teknikBilgiMetni(data.teknikBilgi);
 
-        const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka müşteri temsilcisisin.
-        Şu an sana mesaj yazan numara: +${sender}
-        Veritabanımızdaki Cari Adı: ${cariAdi}
+        const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka asistanısın. Adın RobERD'dir.
+Sana mesaj yazan: +${sender} | Sistemdeki Cari Adı: ${cariAdi}
 
-        BİZİM SATTIĞIMIZ LASTİKLER VE FİYATLARI:
-        ${JSON.stringify(urunler.slice(0, 50))}
+GİZLİLİK KURALI: Aşağıdaki müşteriye özel veriler YALNIZCA ${cariAdi} firmasına aittir. Başka hiçbir firmanın bilgisini paylaşma.
 
-        MÜŞTERİNİN KENDİ GEÇMİŞ İŞLEMLERİ (Ödemeler, faturalar, alınan lastikler):
-        ${JSON.stringify(musteriIslemleri)}
+━━━ TEKNİK BİLGİ TABANI (Herkese verilebilir genel bilgi) ━━━
+${teknikMetin}
 
-        Müşterinin Mesajı: "${message}"
+━━━ ÜRÜN FİYAT LİSTESİ ━━━
+${JSON.stringify(data.urunler || [])}
 
-        KURALLAR:
-        1. Sadece "LASTİKLER VE FİYATLARI" ve "GEÇMİŞ İŞLEMLERİ" listelerine bakarak cevap ver.
-        2. Müşteri faturasını veya bakiyesini sorarsa sadece onun verisine bak. Başkasına bilgi verme.
-        3. Sorunun cevabı verilerde YOKSA, SADECE şunu söyle: "Yetkiliye aktarıyorum, size en kısa zamanda dönüş yapacaklar."
-        4. Kısa, samimi ve net bir profesyonel dil kullan.`;
+━━━ POLYFİLL ARAMA SONUCU (Mesajdaki ölçü için) ━━━
+${JSON.stringify(polyfillSonuc)}
 
-        console.log("🧠 Yapay Zeka düşünülüyor...");
+━━━ MAKİNA - TEKERLEK REHBERİ ━━━
+${JSON.stringify(data.makinalar || [])}
+
+━━━ ${cariAdi} - SİPARİŞ GEÇMİŞİ ━━━
+Sütunlar: ID | Kayıt Tarihi | Cari Adı | Üretim Modeli | İşlem Tipi | Sipariş Adeti | Jant Teslim Alma Tarihi | Jant Teslim Alma | Jant Kontrol | Teslim Etme Tarihi | Teslim Edilen | Kalan | Üretim Sayısı | Tekerlek Tanımı | Anlaşılan Fiyat | Açıklama
+${JSON.stringify(mv.siparisler)}
+
+━━━ ${cariAdi} - AÇIK / BEKLEYEN SİPARİŞLER ━━━
+Sütunlar: ID | Tekerlek Tanımı | Cari Adı | Kayıt Tarihi | Jant Teslim Alma Tarihi | Üretim Sayısı | Geçen Gün Sayısı | Şehir
+${JSON.stringify(mv.acikSiparisler)}
+
+━━━ ${cariAdi} - EKSİK JANT DURUMU ━━━
+Sütunlar: Cari Adı | ID | Tekerlek Tanımı | Kayıt Tarihi | Jant Kontrol | Alınacak Jant | Geçen Gün Sayısı | Şehir
+${JSON.stringify(mv.eksikJant)}
+
+━━━ ${cariAdi} - FATURA / ÖDEME İŞLEMLERİ ━━━
+${JSON.stringify(mv.islemler)}
+
+━━━ ${cariAdi} - BORÇ BAKİYE DURUMU ━━━
+Sütunlar: Frma | SUM/Tutar (toplam satış) | SUM/Tahsilat (toplam ödeme) | Toplam Bakiye (net borç) | Vadeli Ciro | Vadesi Geçmiş Bakiye | Kalan Vade Gün
+${JSON.stringify(mv.bakiye)}
+
+━━━ MÜŞTERİNİN MESAJI ━━━
+"${message}"
+
+━━━ YANIT KURALLARI ━━━
+1. Kendini "RobERD - Erdemli Kauçuk'un yapay zeka asistanı" olarak tanıt (yalnızca ilk mesajda).
+2. TEKNİK sorularda (lastik ölçüsü, polyfill, makina-lastik uyumu vb.) Teknik Bilgi Tabanını kullan. Bu bilgiler herkese verilebilir.
+3. MÜŞTERİYE ÖZEL sorularda (sipariş, bakiye, fiyat) YALNIZCA bu müşterinin verilerini kullan. Başka firma verisi ASLA paylaşma.
+4. Borç/bakiye sorusunda: Toplam Bakiye, Vadesi Geçmiş Bakiye ve Vade Gün bilgilerini açıkça belirt.
+5. Sipariş sorusunda: Sipariş adeti, teslim edilen, kalan ve anlaşılan fiyatı belirt.
+6. Açık sipariş sorusunda: Kaç gündür beklediğini de söyle.
+7. Polyfill/dolum sorusunda: Polyfill Arama Sonucunu kullan, ölçü formatı farklı olsa bile (x, -, /, virgül, nokta) aynı ölçü olarak değerlendir.
+8. Cevap verilerde YOKSA: "Yetkiliye aktarıyorum, en kısa sürede dönüş yapacaklar."
+9. Bilinmeyen Müşteri ise: "Sistemimizde kaydınızı bulamadım. Kayıt için: 0555 016 16 00"
+10. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.`;
+
+        console.log('🧠 RobERD düşünüyor...');
+        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
-        console.log("✅ Yapay Zeka Cevabı Üretti:", aiResponse);
+        console.log('✅ RobERD yanıtladı:', aiResponse);
 
         await axios.post('https://api.fonnte.com/send', {
             target: sender,
             message: aiResponse,
-            countryCode: '90'
-        }, {
-            headers: { 'Authorization': FONNTE_TOKEN }
-        });
+            countryCode: '0'
+        }, { headers: { 'Authorization': FONNTE_TOKEN } });
 
-        console.log(`🚀 CEVAP GÖNDERİLDİ -> ${sender}`);
+        console.log(`🚀 GÖNDERİLDİ -> ${sender}`);
 
     } catch (error) {
-        console.error("❌ Bot çalışma hatası:", error.message || error);
+        console.error('❌ Hata:', error.message || error);
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Erdemli CRM Bot ${PORT} portunda başarıyla çalışıyor.`));
+app.listen(PORT, () => console.log(`RobERD - Erdemli CRM Bot ${PORT} portunda çalışıyor.`));
