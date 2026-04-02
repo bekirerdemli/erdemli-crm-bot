@@ -6,12 +6,12 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 
-// Konuşma takibi — her numara için ilk mesaj mı kontrol eder (1 saat sıfırlanır)
+// Konuşma takibi — her numara için ilk mesaj mı kontrol eder (24 saat sıfırlanır)
 const konusmaBellegi = new Map();
 function ilkMesajMi(sender) {
     const simdi = Date.now();
     const son = konusmaBellegi.get(sender);
-    if (!son || simdi - son > 86400000) { // 24 saat geçmişse sıfırla
+    if (!son || simdi - son > 86400000) {
         konusmaBellegi.set(sender, simdi);
         return true;
     }
@@ -131,6 +131,137 @@ function polyfillAra(polyfillData, aranan) {
     return bulunan;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// TEKNİK BİLGİ AKILLI ARAMA FONKSİYONU
+// Mesajdaki anahtar kelimelere göre ilgili teknik bilgileri filtreler
+// ═══════════════════════════════════════════════════════════════
+function teknikBilgiAra(teknikData, mesaj) {
+    if (!teknikData || !teknikData.length) return { filtrelenmis: '', toplamSatir: 0 };
+
+    const msg = mesaj.toUpperCase().replace(/[_\-\.]/g, ' ');
+
+    // Mesajdan anahtar kelimeleri çıkar
+    const anahtarlar = [];
+
+    // Marka tespiti
+    const markalar = ['ELS LIFT', 'ELS', 'DINGLI', 'JCPT', 'GENIE', 'JLG', 'HAULOTTE', 'SKYJACK', 'SINOBOOM', 'LGMG', 'ZOOMLION', 'MANITOU'];
+    markalar.forEach(m => { if (msg.includes(m)) anahtarlar.push(m); });
+
+    // Model tespiti (EL 12, EL12, JCPT1412DC vb.)
+    const modelRegex = /\b(EL\s*\d+[\-]?[A-Z]*|JCPT\s*\d+\s*[A-Z]*)\b/gi;
+    const modelBulundu = mesaj.match(modelRegex);
+    if (modelBulundu) modelBulundu.forEach(m => anahtarlar.push(m.replace(/\s+/g, ' ').trim().toUpperCase()));
+
+    // Hata kodu tespiti
+    const hataRegex = /\b(hata|arıza|error|fault|kod|code)\b/gi;
+    const hataKoduRegex = /\b(0[1-9]|[1-9][0-9]|OL|LL)\b/g;
+    if (hataRegex.test(mesaj)) {
+        anahtarlar.push('Hata Kodu');
+        const kodlar = mesaj.match(hataKoduRegex);
+        if (kodlar) kodlar.forEach(k => anahtarlar.push(`Hata Kodu ${k}`));
+    }
+
+    // Teknik konu tespiti
+    const konuAnahtarlari = {
+        'bakım': ['Bakım', 'Periyodik'],
+        'bakim': ['Bakım', 'Periyodik'],
+        'maintenance': ['Bakım', 'Periyodik'],
+        'akü': ['Akü', 'Şarj', 'Batarya'],
+        'aku': ['Akü', 'Şarj', 'Batarya'],
+        'şarj': ['Şarj', 'Akü'],
+        'sarj': ['Şarj', 'Akü'],
+        'battery': ['Akü', 'Şarj'],
+        'hidrolik': ['Hidrolik'],
+        'yağ': ['Yağ', 'Hidrolik'],
+        'yag': ['Yağ', 'Hidrolik'],
+        'lastik': ['Lastik', 'Tekerlek'],
+        'tekerlek': ['Tekerlek', 'Lastik'],
+        'fren': ['Fren', 'Brake'],
+        'brake': ['Fren', 'Brake'],
+        'güvenlik': ['Güvenlik'],
+        'guvenlik': ['Güvenlik'],
+        'safety': ['Güvenlik'],
+        'eğim': ['Eğim', 'Eğim Oranı'],
+        'egim': ['Eğim', 'Eğim Oranı'],
+        'slope': ['Eğim'],
+        'kapasite': ['Kapasitesi', 'Yük'],
+        'capacity': ['Kapasitesi', 'Yük'],
+        'yükseklik': ['Yüksekliği', 'Yükseklik'],
+        'yukseklik': ['Yüksekliği', 'Yükseklik'],
+        'height': ['Yüksekliği'],
+        'boyut': ['Boyut', 'Genişlik', 'Uzunluk'],
+        'ölçü': ['Boyut', 'Ölçü'],
+        'olcu': ['Boyut', 'Ölçü'],
+        'ağırlık': ['Ağırlık'],
+        'agirlik': ['Ağırlık'],
+        'weight': ['Ağırlık'],
+        'sürüş': ['Sürüş', 'Hız'],
+        'surus': ['Sürüş', 'Hız'],
+        'hız': ['Hız', 'Sürüş'],
+        'hiz': ['Hız', 'Sürüş'],
+        'speed': ['Hız', 'Sürüş'],
+        'voltaj': ['Voltaj', 'Sistem'],
+        'voltage': ['Voltaj'],
+        'kumanda': ['Kumanda', 'Kontrol', 'Panel'],
+        'kontrol': ['Kontrol', 'Kumanda', 'Panel'],
+        'joystick': ['Kumanda', 'Kontrol'],
+        'alarm': ['Alarm'],
+        'acil': ['Acil', 'Emergency'],
+        'emergency': ['Acil', 'Emergency'],
+        'forklift': ['Forklift'],
+        'nakil': ['Nakil', 'Taşıma'],
+        'taşıma': ['Nakil', 'Taşıma'],
+        'transport': ['Nakil', 'Taşıma'],
+        'elektrik': ['Elektrik'],
+        'electric': ['Elektrik'],
+        'motor': ['Motor'],
+        'bobin': ['Bobin', 'Coil'],
+        'sensör': ['Sensör', 'Sensor'],
+        'sensor': ['Sensör', 'Sensor'],
+        'polyfill': ['Polyfill', 'Dolum'],
+        'dolum': ['Dolum', 'Polyfill'],
+    };
+
+    const msgLower = mesaj.toLowerCase();
+    Object.entries(konuAnahtarlari).forEach(([kelime, etiketler]) => {
+        if (msgLower.includes(kelime)) etiketler.forEach(e => anahtarlar.push(e));
+    });
+
+    // Eğer hiç anahtar kelime bulunamadıysa, boş döndür (gereksiz veri gönderme)
+    if (!anahtarlar.length) return { filtrelenmis: '', toplamSatir: 0 };
+
+    // Teknik bilgi verisini filtrele
+    const eslesen = teknikData.filter(r => {
+        const konu = (r['KONU'] || '').toUpperCase();
+        const aciklama = (r['AÇIKLAMA'] || r['ACIKLAMA'] || '').toUpperCase();
+        const birlesik = konu + ' ' + aciklama;
+
+        return anahtarlar.some(a => birlesik.includes(a.toUpperCase()));
+    });
+
+    // Maksimum 80 satır gönder (token limiti için)
+    const sinirli = eslesen.slice(0, 80);
+    const metin = sinirli.map(r => `• ${r['KONU'] || ''}: ${r['AÇIKLAMA'] || r['ACIKLAMA'] || ''}`).join('\n');
+
+    console.log(`🔍 Teknik bilgi arama: ${anahtarlar.join(', ')} → ${eslesen.length} sonuç (${sinirli.length} gönderildi)`);
+
+    return { filtrelenmis: metin, toplamSatir: eslesen.length };
+}
+
+// Mevcut markalar/modeller listesi (genel bilgi için)
+function teknikBilgiOzet(teknikData) {
+    if (!teknikData || !teknikData.length) return '';
+    const markalar = new Set();
+    teknikData.forEach(r => {
+        const konu = r['KONU'] || '';
+        // "Dingli JCPT1412DC" veya "ELS Lift EL 12" gibi marka-model çıkar
+        const match = konu.match(/^(ELS Lift|Dingli|Genie|JLG|Haulotte|Skyjack|Sinoboom|LGMG|Zoomlion|Manitou)\s+(\S+)/i);
+        if (match) markalar.add(`${match[1]} ${match[2]}`);
+    });
+    if (!markalar.size) return '';
+    return 'Teknik bilgi tabanında mevcut modeller: ' + Array.from(markalar).join(', ');
+}
+
 function musteriFiltrele(data, cariAdi) {
     if (cariAdi === 'Bilinmeyen Musteri') return {};
     const cu = cariAdi.toUpperCase();
@@ -141,12 +272,6 @@ function musteriFiltrele(data, cariAdi) {
         islemler:       (data.islemler       || []).filter(r => (r['Frma'] || r['Firma'] || '').toUpperCase().includes(cu)),
         bakiye:         (data.bakiye         || []).filter(r => (r['Frma'] || '').toUpperCase().includes(cu)),
     };
-}
-
-// Teknik bilgiyi okunabilir metne çevir
-function teknikBilgiMetni(teknikData) {
-    if (!teknikData || !teknikData.length) return '';
-    return teknikData.map(r => `• ${r['KONU'] || ''}: ${r['AÇIKLAMA'] || ''}`).join('\n');
 }
 
 app.post('/webhook', async (req, res) => {
@@ -160,7 +285,6 @@ app.post('/webhook', async (req, res) => {
         const data = await fetchAllData();
         const senderClean = cleanPhone(sender);
 
-        // Virgülle ayrılmış birden fazla telefonu destekle
         const musteri = (data.cariler || []).find(c => {
             const telefonlar = (c['TELEFON'] || '').split(',').map(t => cleanPhone(t.trim())).filter(Boolean);
             return telefonlar.includes(senderClean);
@@ -172,7 +296,10 @@ app.post('/webhook', async (req, res) => {
         const mv = musteriFiltrele(data, cariAdi);
         const ilkMesaj = ilkMesajMi(sender);
         const polyfillSonuc = polyfillAra(data.polyfill, message);
-        const teknikMetin = teknikBilgiMetni(data.teknikBilgi);
+
+        // Teknik bilgi: akıllı arama ile sadece ilgili satırları gönder
+        const teknikSonuc = teknikBilgiAra(data.teknikBilgi, message);
+        const teknikOzet = teknikBilgiOzet(data.teknikBilgi);
 
         const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka asistanısın. Adın RobERD'dir.
 Sana mesaj yazan: +${sender} | Sistemdeki Cari Adı: ${cariAdi} | Bu konuşmada ilk mesaj mı: ${ilkMesaj ? 'EVET' : 'HAYIR (tanıtım ve uyarıları tekrar etme)'}
@@ -180,7 +307,16 @@ Sana mesaj yazan: +${sender} | Sistemdeki Cari Adı: ${cariAdi} | Bu konuşmada 
 GİZLİLİK KURALI: Aşağıdaki müşteriye özel veriler YALNIZCA ${cariAdi} firmasına aittir. Başka hiçbir firmanın bilgisini paylaşma.
 
 ━━━ TEKNİK BİLGİ TABANI (Herkese verilebilir genel bilgi) ━━━
-${teknikMetin}
+${teknikOzet}
+${teknikSonuc.filtrelenmis ? `\nMesajla ilgili bulunan teknik bilgiler (${teknikSonuc.toplamSatir} sonuç):\n${teknikSonuc.filtrelenmis}` : '\n(Bu mesajla eşleşen teknik bilgi bulunamadı)'}
+
+TEKNİK BİLGİ KULLANIM TALİMATI:
+- Yukarıdaki teknik bilgiler "KONU: AÇIKLAMA" formatındadır.
+- Marka ve model adı KONU alanının başında yazar (örn: "Dingli JCPT1412DC Çalışma Yüksekliği: 13.80 m").
+- Hata kodları "Hata Kodu XX - Açıklama: ... Makine Davranışı: ... Çözüm: ..." formatındadır.
+- Müşteri bir marka/model veya hata kodu sorduğunda, yukarıdaki bilgileri DOĞRUDAN kullanarak yanıt ver.
+- Teknik bilgi varsa kesinlikle "bilmiyorum" veya "yetkiliye aktarıyorum" DEME, veriyi kullan.
+- Birden fazla model karşılaştırması istenirse, her modelin bilgisini yan yana sun.
 
 ━━━ ÜRÜN FİYAT LİSTESİ ━━━
 Sütunlar: Tekerlek Tanımı | kaplama (USD) | sıfır jant (USD)
@@ -219,14 +355,14 @@ ${JSON.stringify(mv.bakiye)}
 ━━━ YANIT KURALLARI ━━━
 1. KENDİNİ TANITMA: Sadece konuşmanın İLK mesajında "Ben RobERD, Erdemli Kauçuk'un yapay zeka asistanıyım" de. Sonraki mesajlarda asla tekrar etme.
 2. KAYIT UYARISI: Sadece BİR KEZ ve yalnızca şüphe varsa "Sistemimizdeki kaydınızı şu an eşleştiremedim, detaylar için 0555 016 16 00" de. ASLA "kaydınız yok" veya "sisteme kayıtlı değilsiniz" gibi kesin ifadeler kullanma. Aynı konuşmada tekrar etme.
-3. TEKNİK sorularda (lastik ölçüsü, polyfill, makina-lastik uyumu vb.) Teknik Bilgi Tabanını kullan. Bu bilgiler herkese verilebilir.
+3. TEKNİK sorularda (hata kodu, makine özelliği, lastik ölçüsü, polyfill, makina-lastik uyumu, bakım bilgisi vb.) Teknik Bilgi Tabanını kullan. Bu bilgiler herkese verilebilir. TEKNİK BİLGİ TABANINDA CEVAP VARSA ONU KULLAN, yetkiliye aktarma.
 4. MÜŞTERİYE ÖZEL sorularda (sipariş, bakiye, fiyat) YALNIZCA bu müşterinin verilerini kullan. Başka firma verisi ASLA paylaşma.
 5. Borç/bakiye sorusunda: Toplam Bakiye, Vadesi Geçmiş Bakiye ve Vade Gün bilgilerini açıkça belirt.
 5b. Fiyat sorusunda: Önce müşteriye özel "Anlaşılan Fiyat" sütununa bak. Yoksa fiyat listesindeki "kaplama" ve "sıfır jant" fiyatlarını AYRI AYRI göster. Her zaman USD birimi ile belirt. Örn: Kaplama: $65 USD | Sıfır Jant: $85 USD. Kaplama = müşteri kendi jantını getirir. Sıfır Jant = jant dahil fiyat.
 6. Sipariş sorusunda: Sipariş adeti, teslim edilen, kalan ve anlaşılan fiyatı belirt.
 7. Açık sipariş sorusunda: Kaç gündür beklediğini de söyle.
 8. Polyfill/dolum sorusunda: Polyfill Arama Sonucunu kullan, ölçü formatı farklı olsa bile (x, -, /, virgül, nokta) aynı ölçü olarak değerlendir.
-9. Cevap verilerde YOKSA: "Yetkiliye aktarıyorum, en kısa sürede dönüş yapacaklar."
+9. Cevap verilerde YOKSA (ne teknik bilgi ne müşteri verisi): "Yetkiliye aktarıyorum, en kısa sürede dönüş yapacaklar."
 10. Bilinmeyen Müşteri ise: İlk mesajda yalnızca "Sistemimizdeki kaydınızı şu an eşleştiremedim, 0555 016 16 00 numaralı hattımızdan bizimle iletişime geçebilirsiniz" de ve soruyu yanıtla. Sonraki mesajlarda tekrar etme.
 11. Her mesajın sonuna kayıt/uyarı ekleme. Doğal bir asistan gibi konuş.
 12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.`;
