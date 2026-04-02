@@ -57,15 +57,20 @@ const URLS = {
     bakiye:         `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=754315254`,
 };
 
-function parseCSV(text) {
+function parseCSV(text, sep) {
     const lines = text.split('\n');
     if (!lines.length) return [];
-    const headers = splitRow(lines[0]).map(h => h.trim().replace(/\r/g, ''));
+    // Ayraç otomatik tespit: virgül yoksa | dene
+    if (!sep) {
+        const ilk = lines[0] || '';
+        sep = ilk.includes(',') ? ',' : ilk.includes('|') ? '|' : ',';
+    }
+    const headers = splitRow(lines[0], sep).map(h => h.trim().replace(/\r/g, ''));
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
         if (!line.trim()) continue;
-        const vals = splitRow(line);
+        const vals = splitRow(line, sep);
         const obj = {};
         headers.forEach((h, idx) => { obj[h] = (vals[idx] || '').trim().replace(/\r/g, ''); });
         rows.push(obj);
@@ -73,7 +78,8 @@ function parseCSV(text) {
     return rows;
 }
 
-function splitRow(line) {
+function splitRow(line, sep = ',') {
+    if (sep === '|') return line.split('|').map(v => v.trim());
     const result = []; let cur = '', inQ = false;
     for (let i = 0; i < line.length; i++) {
         const c = line[i];
@@ -341,7 +347,7 @@ ${JSON.stringify(mv.bakiye)}
 12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.`;
 
         console.log('🧠 RobERD düşünüyor...');
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
         console.log('✅ RobERD yanıtladı:', aiResponse);
