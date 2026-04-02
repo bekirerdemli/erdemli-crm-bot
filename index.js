@@ -163,11 +163,19 @@ function teknikBilgiAra(teknikData, mesaj) {
     const modelBulundu = mesaj.match(/\b(EL\s*\d+[\-]?[A-Z]*|JCPT\s*\d+\s*[A-Z]*)\b/gi);
     if (modelBulundu) modelBulundu.forEach(m => anahtarlar.add(m.replace(/\s+/g, ' ').trim().toUpperCase()));
 
-    // — Hata kodu tespiti
+    // — Hata kodu tespiti (hata/arıza kelimesi olmasa bile kod tek başına yazılmışsa yakala)
+    const kodRegex = /\b(0[1-9]|[1-9][0-9]|0L|LL)\b/gi;
+    const tumKodlar = mesaj.match(kodRegex);
+    if (tumKodlar) {
+        anahtarlar.add('Hata Kodu');
+        tumKodlar.forEach(k => {
+            const kUpper = k.toUpperCase();
+            anahtarlar.add(`Hata Kodu ${kUpper}`);
+            anahtarlar.add(kUpper); // direkt kod numarası ile de ara
+        });
+    }
     if (/\b(hata|arıza|error|fault|kod|code)\b/gi.test(mesaj)) {
         anahtarlar.add('Hata Kodu');
-        const kodlar = mesaj.match(/\b(0[1-9]|[1-9][0-9]|OL|LL)\b/g);
-        if (kodlar) kodlar.forEach(k => anahtarlar.add(`Hata Kodu ${k}`));
     }
 
     // — Teknik konu anahtar kelimeleri
@@ -193,6 +201,8 @@ function teknikBilgiAra(teknikData, mesaj) {
         'elektrik':['Elektrik'], 'electric':['Elektrik'],
         'motor':['Motor'], 'bobin':['Bobin'],
         'sensör':['Sensör'], 'sensor':['Sensör'],
+        'arıza':['Hata Kodu','Arıza'], 'ariza':['Hata Kodu','Arıza'], 'hata':['Hata Kodu'], 'fault':['Hata Kodu'],
+        'zoomlion':['Zoomlion'], 'dingli':['Dingli'],
         'polyfill':['Polyfill','Dolum'], 'dolum':['Dolum','Polyfill'],
         'taşıma':['Taşıma','Nakil'], 'nakil':['Nakil','Taşıma'], 'transport':['Taşıma','Nakil'],
         'platform':['Platform'], 'sepet':['Platform','Sepet'],
@@ -217,7 +227,8 @@ function teknikBilgiAra(teknikData, mesaj) {
     // ── Eşleşme yoksa tüm tabloyu gönder — Gemini karar verir
     const tamTablo = eslesen.length === 0;
     const kaynak   = tamTablo ? teknikData : eslesen;
-    const sinirli  = kaynak.slice(0, 120);
+    // Eşleşme varsa tümünü gönder; eşleşme yoksa (tüm tablo) max 300 satır
+    const sinirli  = tamTablo ? kaynak.slice(0, 300) : kaynak;
     const metin    = sinirli.map(r => `• ${r[konuKol] || ''}: ${r[aciklamaKol] || ''}`).join('\n');
 
     console.log(`🔍 Teknik bilgi: anahtar=[${[...anahtarlar].join(', ')}] → ${eslesen.length} eşleşme${tamTablo ? ' (YOK → tüm tablo)' : ''} | gönderilen: ${sinirli.length}/${kaynak.length}`);
