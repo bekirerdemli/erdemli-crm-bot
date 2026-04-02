@@ -132,134 +132,107 @@ function polyfillAra(polyfillData, aranan) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TEKNİK BİLGİ AKILLI ARAMA FONKSİYONU
-// Mesajdaki anahtar kelimelere göre ilgili teknik bilgileri filtreler
+// TEKNİK BİLGİ AKILLI ARAMA FONKSİYONU — v2
+// Kolon adlarını otomatik tespit eder.
+// Eşleşen anahtar kelime yoksa TÜM tabloyu gönderir (Gemini karar verir).
 // ═══════════════════════════════════════════════════════════════
 function teknikBilgiAra(teknikData, mesaj) {
     if (!teknikData || !teknikData.length) return { filtrelenmis: '', toplamSatir: 0 };
 
-    const msg = mesaj.toUpperCase().replace(/[_\-\.]/g, ' ');
+    // ── Kolon adlarını otomatik tespit et (büyük/küçük harf, boşluk, Türkçe karakter farkı önemsiz)
+    const kolonlar = Object.keys(teknikData[0]);
+    const konuKol     = kolonlar.find(k => /konu/i.test(k))              || kolonlar[0];
+    const aciklamaKol = kolonlar.find(k => /a[çc][ıi]klama/i.test(k))   || kolonlar[1];
+    console.log(`📋 Teknik tablo kolonları: [${kolonlar.join(' | ')}] → KONU="${konuKol}" AÇIKLAMA="${aciklamaKol}"`);
 
-    // Mesajdan anahtar kelimeleri çıkar
-    const anahtarlar = [];
+    const msg    = mesaj.toUpperCase().replace(/[_\-\.]/g, ' ');
+    const msgLow = mesaj.toLowerCase();
+    const anahtarlar = new Set();
 
-    // Marka tespiti
-    const markalar = ['ELS LIFT', 'ELS', 'DINGLI', 'JCPT', 'GENIE', 'JLG', 'HAULOTTE', 'SKYJACK', 'SINOBOOM', 'LGMG', 'ZOOMLION', 'MANITOU'];
-    markalar.forEach(m => { if (msg.includes(m)) anahtarlar.push(m); });
+    // — Marka tespiti
+    ['ELS LIFT','ELS','DINGLI','JCPT','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU']
+        .forEach(m => { if (msg.includes(m)) anahtarlar.add(m); });
 
-    // Model tespiti (EL 12, EL12, JCPT1412DC vb.)
-    const modelRegex = /\b(EL\s*\d+[\-]?[A-Z]*|JCPT\s*\d+\s*[A-Z]*)\b/gi;
-    const modelBulundu = mesaj.match(modelRegex);
-    if (modelBulundu) modelBulundu.forEach(m => anahtarlar.push(m.replace(/\s+/g, ' ').trim().toUpperCase()));
+    // — Model tespiti (EL 12, EL12, JCPT1412DC vb.)
+    const modelBulundu = mesaj.match(/\b(EL\s*\d+[\-]?[A-Z]*|JCPT\s*\d+\s*[A-Z]*)\b/gi);
+    if (modelBulundu) modelBulundu.forEach(m => anahtarlar.add(m.replace(/\s+/g, ' ').trim().toUpperCase()));
 
-    // Hata kodu tespiti
-    const hataRegex = /\b(hata|arıza|error|fault|kod|code)\b/gi;
-    const hataKoduRegex = /\b(0[1-9]|[1-9][0-9]|OL|LL)\b/g;
-    if (hataRegex.test(mesaj)) {
-        anahtarlar.push('Hata Kodu');
-        const kodlar = mesaj.match(hataKoduRegex);
-        if (kodlar) kodlar.forEach(k => anahtarlar.push(`Hata Kodu ${k}`));
+    // — Hata kodu tespiti
+    if (/\b(hata|arıza|error|fault|kod|code)\b/gi.test(mesaj)) {
+        anahtarlar.add('Hata Kodu');
+        const kodlar = mesaj.match(/\b(0[1-9]|[1-9][0-9]|OL|LL)\b/g);
+        if (kodlar) kodlar.forEach(k => anahtarlar.add(`Hata Kodu ${k}`));
     }
 
-    // Teknik konu tespiti
-    const konuAnahtarlari = {
-        'bakım': ['Bakım', 'Periyodik'],
-        'bakim': ['Bakım', 'Periyodik'],
-        'maintenance': ['Bakım', 'Periyodik'],
-        'akü': ['Akü', 'Şarj', 'Batarya'],
-        'aku': ['Akü', 'Şarj', 'Batarya'],
-        'şarj': ['Şarj', 'Akü'],
-        'sarj': ['Şarj', 'Akü'],
-        'battery': ['Akü', 'Şarj'],
-        'hidrolik': ['Hidrolik'],
-        'yağ': ['Yağ', 'Hidrolik'],
-        'yag': ['Yağ', 'Hidrolik'],
-        'lastik': ['Lastik', 'Tekerlek'],
-        'tekerlek': ['Tekerlek', 'Lastik'],
-        'fren': ['Fren', 'Brake'],
-        'brake': ['Fren', 'Brake'],
-        'güvenlik': ['Güvenlik'],
-        'guvenlik': ['Güvenlik'],
-        'safety': ['Güvenlik'],
-        'eğim': ['Eğim', 'Eğim Oranı'],
-        'egim': ['Eğim', 'Eğim Oranı'],
-        'slope': ['Eğim'],
-        'kapasite': ['Kapasitesi', 'Yük'],
-        'capacity': ['Kapasitesi', 'Yük'],
-        'yükseklik': ['Yüksekliği', 'Yükseklik'],
-        'yukseklik': ['Yüksekliği', 'Yükseklik'],
-        'height': ['Yüksekliği'],
-        'boyut': ['Boyut', 'Genişlik', 'Uzunluk'],
-        'ölçü': ['Boyut', 'Ölçü'],
-        'olcu': ['Boyut', 'Ölçü'],
-        'ağırlık': ['Ağırlık'],
-        'agirlik': ['Ağırlık'],
-        'weight': ['Ağırlık'],
-        'sürüş': ['Sürüş', 'Hız'],
-        'surus': ['Sürüş', 'Hız'],
-        'hız': ['Hız', 'Sürüş'],
-        'hiz': ['Hız', 'Sürüş'],
-        'speed': ['Hız', 'Sürüş'],
-        'voltaj': ['Voltaj', 'Sistem'],
-        'voltage': ['Voltaj'],
-        'kumanda': ['Kumanda', 'Kontrol', 'Panel'],
-        'kontrol': ['Kontrol', 'Kumanda', 'Panel'],
-        'joystick': ['Kumanda', 'Kontrol'],
-        'alarm': ['Alarm'],
-        'acil': ['Acil', 'Emergency'],
-        'emergency': ['Acil', 'Emergency'],
-        'forklift': ['Forklift'],
-        'nakil': ['Nakil', 'Taşıma'],
-        'taşıma': ['Nakil', 'Taşıma'],
-        'transport': ['Nakil', 'Taşıma'],
-        'elektrik': ['Elektrik'],
-        'electric': ['Elektrik'],
-        'motor': ['Motor'],
-        'bobin': ['Bobin', 'Coil'],
-        'sensör': ['Sensör', 'Sensor'],
-        'sensor': ['Sensör', 'Sensor'],
-        'polyfill': ['Polyfill', 'Dolum'],
-        'dolum': ['Dolum', 'Polyfill'],
+    // — Teknik konu anahtar kelimeleri
+    const konuHaritasi = {
+        'bakım':['Bakım','Periyodik'], 'bakim':['Bakım','Periyodik'], 'maintenance':['Bakım','Periyodik'],
+        'akü':['Akü','Şarj','Batarya'], 'aku':['Akü','Şarj','Batarya'],
+        'şarj':['Şarj','Akü'], 'sarj':['Şarj','Akü'], 'battery':['Akü','Şarj','Batarya'],
+        'hidrolik':['Hidrolik'], 'yağ':['Yağ','Hidrolik'], 'yag':['Yağ','Hidrolik'],
+        'lastik':['Lastik','Tekerlek'], 'tekerlek':['Tekerlek','Lastik'],
+        'fren':['Fren'], 'brake':['Fren'],
+        'güvenlik':['Güvenlik'], 'guvenlik':['Güvenlik'], 'safety':['Güvenlik'],
+        'eğim':['Eğim'], 'egim':['Eğim'], 'slope':['Eğim'],
+        'kapasite':['Kapasite','Yük'], 'capacity':['Kapasite','Yük'],
+        'yükseklik':['Yükseklik'], 'yukseklik':['Yükseklik'], 'height':['Yükseklik'],
+        'kaldırma':['Yükseklik','Kaldırma'], 'kaldirma':['Yükseklik','Kaldırma'],
+        'boyut':['Boyut','Genişlik','Uzunluk'], 'ölçü':['Boyut','Ölçü'], 'olcu':['Boyut','Ölçü'],
+        'ağırlık':['Ağırlık'], 'agirlik':['Ağırlık'], 'weight':['Ağırlık'],
+        'hız':['Hız','Sürüş'], 'hiz':['Hız','Sürüş'], 'speed':['Hız','Sürüş'],
+        'sürüş':['Sürüş','Hız'], 'surus':['Sürüş','Hız'],
+        'voltaj':['Voltaj'], 'voltage':['Voltaj'],
+        'kumanda':['Kumanda','Kontrol'], 'kontrol':['Kontrol','Kumanda'], 'joystick':['Kumanda'],
+        'alarm':['Alarm'], 'acil':['Acil'], 'emergency':['Acil'],
+        'elektrik':['Elektrik'], 'electric':['Elektrik'],
+        'motor':['Motor'], 'bobin':['Bobin'],
+        'sensör':['Sensör'], 'sensor':['Sensör'],
+        'polyfill':['Polyfill','Dolum'], 'dolum':['Dolum','Polyfill'],
+        'taşıma':['Taşıma','Nakil'], 'nakil':['Nakil','Taşıma'], 'transport':['Taşıma','Nakil'],
+        'platform':['Platform'], 'sepet':['Platform','Sepet'],
+        'çalışma':['Çalışma'], 'calisma':['Çalışma'],
+        'özellik':['Özellik'], 'ozellik':['Özellik'], 'teknik':['Teknik'],
     };
-
-    const msgLower = mesaj.toLowerCase();
-    Object.entries(konuAnahtarlari).forEach(([kelime, etiketler]) => {
-        if (msgLower.includes(kelime)) etiketler.forEach(e => anahtarlar.push(e));
+    Object.entries(konuHaritasi).forEach(([kelime, etiketler]) => {
+        if (msgLow.includes(kelime)) etiketler.forEach(e => anahtarlar.add(e));
     });
 
-    // Eğer hiç anahtar kelime bulunamadıysa, boş döndür (gereksiz veri gönderme)
-    if (!anahtarlar.length) return { filtrelenmis: '', toplamSatir: 0 };
+    // ── Filtrele
+    let eslesen = [];
+    if (anahtarlar.size > 0) {
+        eslesen = teknikData.filter(r => {
+            const konu     = (r[konuKol]     || '').toUpperCase();
+            const aciklama = (r[aciklamaKol] || '').toUpperCase();
+            const birlesik = konu + ' ' + aciklama;
+            return [...anahtarlar].some(a => birlesik.includes(a.toUpperCase()));
+        });
+    }
 
-    // Teknik bilgi verisini filtrele
-    const eslesen = teknikData.filter(r => {
-        const konu = (r['KONU'] || '').toUpperCase();
-        const aciklama = (r['AÇIKLAMA'] || r['ACIKLAMA'] || '').toUpperCase();
-        const birlesik = konu + ' ' + aciklama;
+    // ── Eşleşme yoksa tüm tabloyu gönder — Gemini karar verir
+    const tamTablo = eslesen.length === 0;
+    const kaynak   = tamTablo ? teknikData : eslesen;
+    const sinirli  = kaynak.slice(0, 120);
+    const metin    = sinirli.map(r => `• ${r[konuKol] || ''}: ${r[aciklamaKol] || ''}`).join('\n');
 
-        return anahtarlar.some(a => birlesik.includes(a.toUpperCase()));
-    });
+    console.log(`🔍 Teknik bilgi: anahtar=[${[...anahtarlar].join(', ')}] → ${eslesen.length} eşleşme${tamTablo ? ' (YOK → tüm tablo)' : ''} | gönderilen: ${sinirli.length}/${kaynak.length}`);
 
-    // Maksimum 80 satır gönder (token limiti için)
-    const sinirli = eslesen.slice(0, 80);
-    const metin = sinirli.map(r => `• ${r['KONU'] || ''}: ${r['AÇIKLAMA'] || r['ACIKLAMA'] || ''}`).join('\n');
-
-    console.log(`🔍 Teknik bilgi arama: ${anahtarlar.join(', ')} → ${eslesen.length} sonuç (${sinirli.length} gönderildi)`);
-
-    return { filtrelenmis: metin, toplamSatir: eslesen.length };
+    return { filtrelenmis: metin, toplamSatir: kaynak.length, tamTablo };
 }
 
 // Mevcut markalar/modeller listesi (genel bilgi için)
 function teknikBilgiOzet(teknikData) {
     if (!teknikData || !teknikData.length) return '';
-    const markalar = new Set();
+    const kolonlar  = Object.keys(teknikData[0]);
+    const konuKol   = kolonlar.find(k => /konu/i.test(k)) || kolonlar[0];
+    const markalar  = new Set();
     teknikData.forEach(r => {
-        const konu = r['KONU'] || '';
-        // "Dingli JCPT1412DC" veya "ELS Lift EL 12" gibi marka-model çıkar
-        const match = konu.match(/^(ELS Lift|Dingli|Genie|JLG|Haulotte|Skyjack|Sinoboom|LGMG|Zoomlion|Manitou)\s+(\S+)/i);
+        const konu = r[konuKol] || '';
+        const match = konu.match(/^(ELS\s*Lift|Dingli|Genie|JLG|Haulotte|Skyjack|Sinoboom|LGMG|Zoomlion|Manitou)\s+(\S+)/i);
         if (match) markalar.add(`${match[1]} ${match[2]}`);
     });
-    if (!markalar.size) return '';
-    return 'Teknik bilgi tabanında mevcut modeller: ' + Array.from(markalar).join(', ');
+    return markalar.size
+        ? `Teknik bilgi tabanındaki modeller: ${[...markalar].join(', ')} (toplam ${teknikData.length} kayıt)`
+        : `Teknik bilgi tabanı mevcut (${teknikData.length} kayıt)`;
 }
 
 function musteriFiltrele(data, cariAdi) {
@@ -308,7 +281,7 @@ GİZLİLİK KURALI: Aşağıdaki müşteriye özel veriler YALNIZCA ${cariAdi} f
 
 ━━━ TEKNİK BİLGİ TABANI (Herkese verilebilir genel bilgi) ━━━
 ${teknikOzet}
-${teknikSonuc.filtrelenmis ? `\nMesajla ilgili bulunan teknik bilgiler (${teknikSonuc.toplamSatir} sonuç):\n${teknikSonuc.filtrelenmis}` : '\n(Bu mesajla eşleşen teknik bilgi bulunamadı)'}
+${teknikSonuc.filtrelenmis ? `\nMesajla ilgili bulunan teknik bilgiler (${teknikSonuc.toplamSatir} kayıt${teknikSonuc.tamTablo ? ' — eşleşme bulunamadı, tüm tablo gönderildi' : ''}):\n${teknikSonuc.filtrelenmis}` : '\n(Teknik bilgi tabanı boş veya yüklenemedi)'}
 
 TEKNİK BİLGİ KULLANIM TALİMATI:
 - Yukarıdaki teknik bilgiler "KONU: AÇIKLAMA" formatındadır.
@@ -368,7 +341,7 @@ ${JSON.stringify(mv.bakiye)}
 12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.`;
 
         console.log('🧠 RobERD düşünüyor...');
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
         console.log('✅ RobERD yanıtladı:', aiResponse);
