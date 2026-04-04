@@ -437,8 +437,10 @@ app.post('/webhook', async (req, res) => {
 💰 Fiyat: ${session.fiyat}
 📅 Tarih: ${new Date().toLocaleDateString('tr-TR')}
 
-Siparişinizi onaylamak için *ONAYLA* yazın.
-İptal etmek için *İPTAL* yazın.`;
+1️⃣ Onayla
+2️⃣ İptal Et
+
+Lütfen *1* veya *2* yazın.`;
 
                 siparisSession.set(sender, { ...session, state: 'awaiting_confirm' }); sessionKaydet(siparisSession);
 
@@ -491,8 +493,10 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
 💰 Fiyat: ${secim.fiyat}
 📅 Tarih: ${new Date().toLocaleDateString('tr-TR')}
 
-Siparişinizi onaylamak için *ONAYLA* yazın.
-İptal etmek için *İPTAL* yazın.`;
+1️⃣ Onayla
+2️⃣ İptal Et
+
+Lütfen *1* veya *2* yazın.`;
 
                 siparisSession.set(sender, {
                     ...session,
