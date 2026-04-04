@@ -616,35 +616,9 @@ ${JSON.stringify(data.urunler || [])}
 ${JSON.stringify(polyfillSonuc)}
 
 ━━━ MAKİNA - TEKERLEK REHBERİ ━━━
-AÇIKLAMA: Bu tablo marka, model, yükseklik, lastik ölçüsü ve lastik tipi bilgilerini içerir.
-KRİTİK KURAL: Müşteri belirli bir marka/yükseklik sorduğunda TABLO'DAKİ eşleşen TÜM satırları listele.
-- Hiçbir satırı atlama, birleştirme veya özetleme.
-- Tabloda kaç satır varsa listeye o kadar madde yaz.
-- Model adlarını TABLODAKÎ GİBİ yaz (JCPT1212DC, S1212AC+, JCPT1212HA vb.) — kısaltma veya değiştirme yapma.
-- "+" işareti olan modeller (S1212AC+) ile olmayanlar (S1212AC) FARKLI modellerdir, ikisini de listele.
-${JSON.stringify(
-    (() => {
-        const msgU = message.toUpperCase();
-        const filtered = (data.makinalar || []).filter(r => {
-            const satirU = JSON.stringify(r).toUpperCase();
-            // Marka filtresi
-            const markalar = ['DINGLI','DİNGLİ','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS'];
-            const markaBulundu = markalar.some(m => msgU.includes(m) && satirU.includes(m));
-            // Yükseklik filtresi (8m, 12m, 16m vb.)
-            const yukseklikMatch = msgU.match(/(\d{1,2})\s*M(ETRE)?/);
-            const yukseklikBulundu = yukseklikMatch ? satirU.includes(yukseklikMatch[1]+'M') || satirU.includes(yukseklikMatch[1]+' M') : false;
-            // Model adı filtresi (JCPT, GS-, EL vb.)
-            const modelMatch = msgU.match(/(JCPT\w*|GS-?\d+|EL\s*\d+|S\d{4}|JLG\w*)/);
-            const modelBulundu = modelMatch ? satirU.includes(modelMatch[0]) : false;
-            if (modelBulundu) return true;
-            if (markaBulundu && yukseklikBulundu) return true;
-            if (markaBulundu) return true;
-            return false;
-        });
-        // Filtre sonuç vermediyse tümünü gönder
-        return filtered.length > 0 ? filtered : (data.makinalar || []);
-    })()
-)}
+KRİTİK KURAL: Müşteri marka/yükseklik sorduğunda aşağıdaki tablodan eşleşen TÜM satırları listele.
+Hiçbir satırı atlama. Model adlarını birebir yaz. "+" olan ile olmayan FARKLI modeldir.
+${(data.makinalar || []).map(r => Object.values(r).join(' | ')).join('\n')}
 
 ━━━ ${cariAdi} - SİPARİŞ GEÇMİŞİ ━━━
 Sütunlar: ID | Kayıt Tarihi | Cari Adı | Üretim Modeli | İşlem Tipi | Sipariş Adeti | Jant Teslim Alma Tarihi | Jant Teslim Alma | Jant Kontrol | Teslim Etme Tarihi | Teslim Edilen | Kalan | Üretim Sayısı | Tekerlek Tanımı | Anlaşılan Fiyat | Açıklama
