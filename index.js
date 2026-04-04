@@ -410,10 +410,8 @@ app.post('/webhook', async (req, res) => {
 `🔧 *Hangi seçeneği istersiniz?*
 
 1️⃣ *Kaplama* — ${session.kaplamaFiyat}
-   _(Kendi jantınızı getirirsiniz)_
 
 2️⃣ *Sıfır Jantlı* — ${session.sifirJant}
-   _(Jant dahil teslim edilir)_
 
 *1* veya *2* yazın.`;
 
