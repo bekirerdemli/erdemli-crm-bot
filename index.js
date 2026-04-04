@@ -402,7 +402,7 @@ app.post('/webhook', async (req, res) => {
 
         // AŞAMA 2: Müşteri "EVET" veya "HAYIR" dedi (sipariş teklifi bekleniyor)
         if (session && session.state === 'awaiting_order') {
-            if (msgNorm === '1' || msgNorm.includes('EVET') || msgNorm.includes('SİPARİŞ VER')) {
+            if (msgNorm === '1' || msgNorm.includes('EVET') || msgNorm.includes('SİPARİŞ VER') || msgNorm.includes('SIPARIS VER')) {
 
                 if (session.ciftOpsiyon) {
                     // Çift opsiyon — kaplama mı sıfır jant mı sor
@@ -422,7 +422,10 @@ app.post('/webhook', async (req, res) => {
                     await axios.post('https://api.fonnte.com/send', {
                         target: sender,
                         message: opsiyonMesaji,
-                        button: JSON.stringify(['Kaplama', 'Sıfır Jantlı']),
+                        buttons: JSON.stringify([
+                            {id:'1', title:'Kaplama'},
+                            {id:'2', title:'Sıfır Jantlı'}
+                        ]),
                         countryCode: '0'
                     }, { headers: { 'Authorization': FONNTE_TOKEN } });
                     console.log(`🔧 Opsiyon sorusu gönderildi -> ${sender}`);
@@ -693,7 +696,10 @@ ${JSON.stringify(mv.bakiye)}
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
                     message: '🛒 Bu ürünü sipariş vermek ister misiniz?',
-                    button: JSON.stringify(['Evet, sipariş ver', 'Hayır, vazgeçtim']),
+                    buttons: JSON.stringify([
+                        {id:'1', title:'✅ Evet, sipariş ver'},
+                        {id:'2', title:'❌ Hayır, vazgeçtim'}
+                    ]),
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
                 console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | Ürün: ${bilgi.urunAdi} | Fiyat: ${bilgi.fiyat || bilgi.kaplamaFiyat}`);
