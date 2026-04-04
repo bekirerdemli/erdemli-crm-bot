@@ -616,9 +616,36 @@ ${JSON.stringify(data.urunler || [])}
 ${JSON.stringify(polyfillSonuc)}
 
 ━━━ MAKİNA - TEKERLEK REHBERİ ━━━
-KRİTİK KURAL: Müşteri marka/yükseklik sorduğunda aşağıdaki tablodan eşleşen TÜM satırları listele.
-Hiçbir satırı atlama. Model adlarını birebir yaz. "+" olan ile olmayan FARKLI modeldir.
-${(data.makinalar || []).map(r => Object.values(r).join(' | ')).join('\n')}
+${(() => {
+    const msgU = message.toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+    const markalar = ['DINGLI','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS'];
+    const markaBulundu = markalar.find(m => msgU.includes(m));
+    const yukseklikMatch = msgU.match(/(\d{1,2})\s*(M|METRE|METER)/);
+
+    if (markaBulundu || yukseklikMatch) {
+        const eslesen = (data.makinalar || []).filter(r => {
+            const satirStr = Object.values(r).join(' ').toUpperCase()
+                .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+            const markaOk = markaBulundu ? satirStr.includes(markaBulundu) : true;
+            const yukseklikOk = yukseklikMatch ? satirStr.includes(yukseklikMatch[1]+'M') : true;
+            return markaOk && yukseklikOk;
+        });
+
+        if (eslesen.length > 0) {
+            // Session'a model listesini kaydet
+            const mevcut = siparisSession.get(sender) || {};
+            const kolonlar = Object.keys(eslesen[0]);
+            const modelKol = kolonlar.find(k => /model/i.test(k)) || kolonlar[1];
+            const modelListesi = eslesen.map(r => Object.values(r).join(' | '));
+            siparisSession.set(sender, { ...mevcut, modelListesi: eslesen.map(r => r[modelKol] || Object.values(r)[1]) });
+            sessionKaydet(siparisSession);
+
+            const liste = eslesen.map((r, i) => `${i+1}. ${Object.values(r).join(' | ')}`).join('\n');
+            return `Müşteri model seçimi yapacak. Aşağıdaki listeyi OLDUĞU GİBİ sun, HİÇBİR SATIRI ATLAMA (toplam ${eslesen.length} model):\n${liste}\n\nSon olarak "Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli." yaz.`;
+        }
+    }
+    return (data.makinalar || []).map(r => Object.values(r).join(' | ')).join('\n');
+})()}
 
 ━━━ ${cariAdi} - SİPARİŞ GEÇMİŞİ ━━━
 Sütunlar: ID | Kayıt Tarihi | Cari Adı | Üretim Modeli | İşlem Tipi | Sipariş Adeti | Jant Teslim Alma Tarihi | Jant Teslim Alma | Jant Kontrol | Teslim Etme Tarihi | Teslim Edilen | Kalan | Üretim Sayısı | Tekerlek Tanımı | Anlaşılan Fiyat | Açıklama
