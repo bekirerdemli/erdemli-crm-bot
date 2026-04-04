@@ -349,7 +349,8 @@ async function siparisiSheetsYaz(siparis) {
 
 function fiyatVarMi(metin) {
     // Hem USD/$ içeren normal fiyat hem de [URUN:|FIYAT:] tag'i ara
-    return /(\$[\d,.]+|[\d][\d,.]*\s*USD|\[URUN:)/i.test(metin);
+    // Sadece Gemini'nin eklediği tag varsa tetikle — çoklu ürün listelerinde tag eklenmez
+    return /\[URUN:/i.test(metin);
 }
 
 function fiyatBilgisiCikar(metin) {
