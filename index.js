@@ -402,7 +402,7 @@ app.post('/webhook', async (req, res) => {
 
         // AŞAMA 2: Müşteri "EVET" veya "HAYIR" dedi (sipariş teklifi bekleniyor)
         if (session && session.state === 'awaiting_order') {
-            if (msgNorm === 'EVET' || msgNorm === 'E' || msgNorm === '1') {
+            if (msgNorm === '1') {
 
                 if (session.ciftOpsiyon) {
                     // Çift opsiyon — kaplama mı sıfır jant mı sor
@@ -451,7 +451,7 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                 console.log(`📋 Onay formu gönderildi -> ${sender}`);
                 return;
 
-            } else if (msgNorm === 'HAYIR' || msgNorm === 'H' || msgNorm === '2') {
+            } else if (msgNorm === '2') {
                 siparisSession.delete(sender); sessionKaydet(siparisSession);
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
@@ -461,8 +461,13 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                 console.log(`❌ Sipariş iptal edildi -> ${sender}`);
                 return;
             } else {
-                // Farklı bir şey yazdı, session'ı sil normal akışa dön
-                siparisSession.delete(sender);
+                // Farklı bir şey yazdı — uyar, session'ı koru
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: '❓ Lütfen *1* (Evet) veya *2* (Hayır) yazın.',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                return;
             }
         }
 
@@ -513,7 +518,7 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
 
         // AŞAMA 3: Müşteri "ONAYLA" veya "İPTAL" dedi
         if (session && session.state === 'awaiting_confirm') {
-            if (msgNorm === 'ONAYLA' || msgNorm === 'ONAY' || msgNorm === 'ONAYLA.' || msgNorm === 'EVET') {
+            if (msgNorm === '1') {
                 // Google Sheets'e yaz
                 const yazildi = await siparisiSheetsYaz({
                     cariAdi: session.cariAdi,
@@ -537,7 +542,7 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                 console.log(`✅ Sipariş onaylandı ve kaydedildi -> ${sender}`);
                 return;
 
-            } else if (msgNorm === 'İPTAL' || msgNorm === 'IPTAL' || msgNorm === 'HAYIR') {
+            } else if (msgNorm === '2') {
                 siparisSession.delete(sender); sessionKaydet(siparisSession);
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
@@ -547,7 +552,12 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                 console.log(`❌ Sipariş iptal edildi -> ${sender}`);
                 return;
             } else {
-                siparisSession.delete(sender);
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: '❓ Lütfen *1* (Onayla) veya *2* (İptal Et) yazın.',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                return;
             }
         }
 
@@ -679,7 +689,7 @@ ${JSON.stringify(mv.bakiye)}
             setTimeout(async () => {
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
-                    message: '🛒 Bu ürünü sipariş vermek ister misiniz?\n\n✅ *EVET*\n❌ *HAYIR*',
+                    message: '🛒 Bu ürünü sipariş vermek ister misiniz?\n\n*1* — Evet, sipariş ver ✅\n*2* — Hayır, vazgeçtim ❌',
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
                 console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | Ürün: ${urunAdi} | Fiyat: ${fiyat}`);
