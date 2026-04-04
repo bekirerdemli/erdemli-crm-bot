@@ -617,7 +617,11 @@ ${JSON.stringify(polyfillSonuc)}
 
 ━━━ MAKİNA - TEKERLEK REHBERİ ━━━
 AÇIKLAMA: Bu tablo marka, model, yükseklik, lastik ölçüsü ve lastik tipi bilgilerini içerir.
-Müşteri belirli bir marka/yükseklik/model sorduğunda TABLO'DAN eşleşen TÜM satırları listele, hiçbirini atlama.
+KRİTİK KURAL: Müşteri belirli bir marka/yükseklik sorduğunda TABLO'DAKİ eşleşen TÜM satırları listele.
+- Hiçbir satırı atlama, birleştirme veya özetleme.
+- Tabloda kaç satır varsa listeye o kadar madde yaz.
+- Model adlarını TABLODAKÎ GİBİ yaz (JCPT1212DC, S1212AC+, JCPT1212HA vb.) — kısaltma veya değiştirme yapma.
+- "+" işareti olan modeller (S1212AC+) ile olmayanlar (S1212AC) FARKLI modellerdir, ikisini de listele.
 ${JSON.stringify(
     (() => {
         const msgU = message.toUpperCase();
