@@ -4,6 +4,37 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { google } = require('googleapis');
+const fs = require('fs');
+const path = require('path');
+
+// Session dosyası — Render restart sonrası da korunur
+const SESSION_FILE = path.join('/tmp', 'siparis_sessions.json');
+
+function sessionYukle() {
+    try {
+        if (fs.existsSync(SESSION_FILE)) {
+            const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+            // 2 saatten eski session'ları temizle
+            const simdi = Date.now();
+            const temiz = {};
+            Object.entries(data).forEach(([k, v]) => {
+                if (simdi - (v.timestamp || 0) < 7200000) temiz[k] = v;
+            });
+            return temiz;
+        }
+    } catch(e) { console.error('Session yükleme hatası:', e.message); }
+    return {};
+}
+
+function sessionKaydet(sessions) {
+    try {
+        const obj = {};
+        sessions.forEach((v, k) => { obj[k] = v; });
+        fs.writeFileSync(SESSION_FILE, JSON.stringify(obj), 'utf8');
+    } catch(e) { console.error('Session kaydetme hatası:', e.message); }
+}
+
+// Session başlangıçta yüklenir (aşağıda app.listen'den önce)
 
 const app = express();
 
@@ -11,6 +42,7 @@ const app = express();
 // Olası state değerleri: 'awaiting_order' | 'awaiting_option' | 'awaiting_confirm'
 const siparisSession = new Map();
 // { state, cariAdi, telefon, urunAdi, fiyat, adet, timestamp }
+// Not: sessionYukle() aşağıda googleapis require'dan sonra çağrılır
 
 // Konuşma takibi — her numara için ilk mesaj mı kontrol eder (24 saat sıfırlanır)
 const konusmaBellegi = new Map();
@@ -385,7 +417,7 @@ app.post('/webhook', async (req, res) => {
 
 *1* veya *2* yazın.`;
 
-                    siparisSession.set(sender, { ...session, state: 'awaiting_option' });
+                    siparisSession.set(sender, { ...session, state: 'awaiting_option' }); sessionKaydet(siparisSession);
 
                     await axios.post('https://api.fonnte.com/send', {
                         target: sender,
@@ -408,7 +440,7 @@ app.post('/webhook', async (req, res) => {
 Siparişinizi onaylamak için *ONAYLA* yazın.
 İptal etmek için *İPTAL* yazın.`;
 
-                siparisSession.set(sender, { ...session, state: 'awaiting_confirm' });
+                siparisSession.set(sender, { ...session, state: 'awaiting_confirm' }); sessionKaydet(siparisSession);
 
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
@@ -420,7 +452,7 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                 return;
 
             } else if (msgNorm === 'HAYIR' || msgNorm === 'H' || msgNorm === '2') {
-                siparisSession.delete(sender);
+                siparisSession.delete(sender); sessionKaydet(siparisSession);
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
                     message: 'Anlaşıldı, sipariş verilmedi. Başka bir konuda yardımcı olabilir miyim? 😊',
@@ -460,7 +492,7 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                     ...session,
                     state: 'awaiting_confirm',
                     fiyat: `${secim.tip} - ${secim.fiyat}`,
-                });
+                }); sessionKaydet(siparisSession);
 
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
@@ -490,7 +522,7 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                     fiyat:   session.fiyat,
                     adet:    1,
                 });
-                siparisSession.delete(sender);
+                siparisSession.delete(sender); sessionKaydet(siparisSession);
 
                 const sonucMesaji = yazildi
                     ? `✅ *Siparişiniz alındı!*\n\nEn kısa sürede sizinle iletişime geçeceğiz. Teşekkürler! 🙏`
@@ -506,7 +538,7 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
                 return;
 
             } else if (msgNorm === 'İPTAL' || msgNorm === 'IPTAL' || msgNorm === 'HAYIR') {
-                siparisSession.delete(sender);
+                siparisSession.delete(sender); sessionKaydet(siparisSession);
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
                     message: 'Sipariş iptal edildi. Başka bir konuda yardımcı olabilir miyim? 😊',
@@ -642,7 +674,7 @@ ${JSON.stringify(mv.bakiye)}
                 sifirJant:   bilgi.sifirJant || '',
                 ciftOpsiyon: bilgi.ciftOpsiyon || false,
                 timestamp:   Date.now(),
-            });
+            }); sessionKaydet(siparisSession);
             // Kısa bir gecikme ile sipariş sorusunu gönder
             setTimeout(async () => {
                 await axios.post('https://api.fonnte.com/send', {
@@ -658,6 +690,13 @@ ${JSON.stringify(mv.bakiye)}
         console.error('❌ Hata:', error.message || error);
     }
 });
+
+// Başlangıçta session'ları dosyadan yükle
+try {
+    const yukluData = sessionYukle();
+    Object.entries(yukluData).forEach(([k, v]) => siparisSession.set(k, v));
+    console.log(`📂 ${Object.keys(yukluData).length} aktif session yüklendi`);
+} catch(e) {}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`RobERD - Erdemli CRM Bot ${PORT} portunda çalışıyor.`));
