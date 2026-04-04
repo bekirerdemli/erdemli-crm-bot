@@ -696,7 +696,7 @@ ${JSON.stringify(mv.bakiye)}
                     button: JSON.stringify(['Evet, sipariş ver', 'Hayır, vazgeçtim']),
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
-                console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | Ürün: ${urunAdi} | Fiyat: ${fiyat}`);
+                console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | Ürün: ${bilgi.urunAdi} | Fiyat: ${bilgi.fiyat || bilgi.kaplamaFiyat}`);
             }, 1500);
         }
 
