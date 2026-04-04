@@ -639,6 +639,9 @@ ${JSON.stringify(mv.islemler)}
 Sütunlar: Frma | SUM/Tutar (toplam satış) | SUM/Tahsilat (toplam ödeme) | Toplam Bakiye (net borç) | Vadeli Ciro | Vadesi Geçmiş Bakiye | Kalan Vade Gün
 ${JSON.stringify(mv.bakiye)}
 
+━━━ SON LİSTELENEN MODELLER (Müşteri numara yazdıysa bu listeye göre eşleştir) ━━━
+${siparisSession.get(sender)?.modelListesi ? siparisSession.get(sender).modelListesi.map((m,i) => `${i+1}. ${m}`).join('\n') : 'Henüz model listesi sunulmadı'}
+
 ━━━ MÜŞTERİNİN MESAJI ━━━
 "${message}"
 
@@ -661,22 +664,27 @@ ${JSON.stringify(mv.bakiye)}
 ADIM 1 — Müşterinin makine modeli net belli mi?
 - Müşteri "Dingli 12 metre", "Genie 8 metre", "makaslı platform" gibi genel bir ifade kullandıysa → Model belirsizdir.
 - Model belirsizse: Fiyat VERME, lastik ölçüsü VERME.
-  Bunun yerine Makina-Tekerlek Rehberinden o marka/yükseklikle eşleşen TÜM modelleri numaralandırarak listele ve müşteriye seç:
+  Bunun yerine Makina-Tekerlek Rehberinden o marka/yükseklikle eşleşen TÜM modelleri numaralandırarak listele:
 
-  Örnek yanıt:
   "Dingli 12 metre makaslı platformlar için elimizdeki modeller şunlardır:
-  1️⃣ JCPT2632HD
-  2️⃣ JCPT2632DC
-  3️⃣ JCPT3246HD
+  1️⃣ JCPT1212DC
+  2️⃣ JCPT1212HD
+  ...
   Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli."
 
-- Müşteri numara veya model adı yazarsa → o modelin lastiğini Makina-Tekerlek Rehberinden bul, fiyatı ver.
+ADIM 2 — Müşteri numara veya model adı yazdıysa → Model tespit edildi.
+- Makina-Tekerlek Rehberinden o modelin lastik ölçüsünü ve lastik tipini bul.
+- Lastik tipine göre fiyatı şu kurallarla belirle:
 
-ADIM 2 — Model netleştikten sonra fiyat ver ve tag ekle:
-- TEK ÜRÜN için: yanıtın EN SONUNA tag ekle:
+  🔵 BİJONLU lastik tipi → Ürün fiyat listesinde "Dingli DC" veya genel "Bijonlu" fiyatını kullan.
+  🔴 KAMALI lastik tipi  → Ürün fiyat listesinde "Dingli HA" veya genel "Kamalı" fiyatını kullan.
+  🟡 DİĞER tipler (PA, HD vb.) → Fiyat listesinde eşleşen ürünü bul.
+
+- Fiyatı bulduktan sonra yanıtın EN SONUNA tag ekle:
   * Hem kaplama hem sıfır jant varsa: [URUN:ürün adı|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
-    Örnek: [URUN:15x5 Tekerlek (Dingli)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
+    Örnek: [URUN:15x5 Tekerlek Kamalı (Dingli HA)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
   * Tek fiyat varsa: [URUN:ürün adı|FIYAT:fiyat]
+
 - BİRDEN FAZLA ÜRÜN listelendiyse: KESİNLİKLE tag EKLEME.`;
 
         console.log('🧠 RobERD düşünüyor...');
@@ -695,6 +703,23 @@ ADIM 2 — Model netleştikten sonra fiyat ver ve tag ekle:
         }, { headers: { 'Authorization': FONNTE_TOKEN } });
 
         console.log(`🚀 GÖNDERİLDİ -> ${sender}`);
+
+        // ─── Model listesi çıkarıldıysa session'a kaydet ───
+        const modelListesiMatch = temizMesaj.match(/1️⃣[\s\S]*?(?=Hangi modeli|$)/);
+        if (modelListesiMatch) {
+            const satirlar = temizMesaj.split('\n');
+            const modeller = [];
+            satirlar.forEach(s => {
+                const m = s.match(/^\s*\d+[.️⃣]\s*(?:Dingli|Genie|JLG|Haulotte|Skyjack|Sinoboom|LGMG|Zoomlion|ELS)?\s*([A-Z0-9\-+]+)/i);
+                if (m) modeller.push(m[1].trim());
+            });
+            if (modeller.length > 0) {
+                const mevcut = siparisSession.get(sender) || {};
+                siparisSession.set(sender, { ...mevcut, modelListesi: modeller });
+                sessionKaydet(siparisSession);
+                console.log(`📋 Model listesi kaydedildi: ${modeller.join(', ')}`);
+            }
+        }
 
         // ─── AŞAMA 1: Bot fiyat verdiyse sipariş teklifi gönder ───
         if (fiyatVarMi(aiResponse)) {
