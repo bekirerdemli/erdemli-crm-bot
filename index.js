@@ -696,16 +696,18 @@ ADIM 1 — Müşterinin makine modeli net belli mi?
   Son olarak "Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli." yaz.
 
 ADIM 2 — Müşteri numara veya model adı yazdıysa → Model tespit edildi.
+- SON LİSTELENEN MODELLER bölümündeki listeye göre seçilen modeli bul.
 - Makina-Tekerlek Rehberinden o modelin lastik ölçüsünü ve lastik tipini bul.
-- Lastik tipine göre fiyatı şu kurallarla belirle:
+- Lastik tipine göre ÜRÜN FİYAT LİSTESİNDEN doğru satırı seç:
 
-  🔵 BİJONLU lastik tipi → Ürün fiyat listesinde "Dingli DC" veya genel "Bijonlu" fiyatını kullan.
-  🔴 KAMALI lastik tipi  → Ürün fiyat listesinde "Dingli HA" veya genel "Kamalı" fiyatını kullan.
-  🟡 DİĞER tipler (PA, HD vb.) → Fiyat listesinde eşleşen ürünü bul.
+  🔴 KAMALI  → Fiyat listesinde "Dingli HA" adını içeren satırı bul, o fiyatı kullan. Ürün adı = "Dingli HA [ölçü]"
+  🔵 BİJONLU → Fiyat listesinde "Dingli DC" adını içeren satırı bul, o fiyatı kullan. Ürün adı = "Dingli DC [ölçü]"
+  🟡 KAMALI veya BİJONLU değilse → Lastik ölçüsüne göre fiyat listesinden en yakın eşleşmeyi bul.
 
 - Fiyatı bulduktan sonra yanıtın EN SONUNA tag ekle:
   * Hem kaplama hem sıfır jant varsa: [URUN:ürün adı|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
-    Örnek: [URUN:15x5 Tekerlek Kamalı (Dingli HA)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
+    Örnek (kamalı): [URUN:Dingli HA 15x5|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
+    Örnek (bijonlu): [URUN:Dingli DC 15x5|KAPLAMA:$55 USD|SIFIRJANT:$85 USD]
   * Tek fiyat varsa: [URUN:ürün adı|FIYAT:fiyat]
 
 - BİRDEN FAZLA ÜRÜN listelendiyse: KESİNLİKLE tag EKLEME.`;
