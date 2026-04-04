@@ -8,7 +8,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ─── SİPARİŞ ONAY AKIŞI — her numara için bekleyen sipariş durumu ───
-// Olası state değerleri: 'awaiting_order' | 'awaiting_confirm'
+// Olası state değerleri: 'awaiting_order' | 'awaiting_option' | 'awaiting_confirm'
 const siparisSession = new Map();
 // { state, cariAdi, telefon, urunAdi, fiyat, adet, timestamp }
 
@@ -321,20 +321,31 @@ function fiyatVarMi(metin) {
 }
 
 function fiyatBilgisiCikar(metin) {
-    // Önce Gemini'nin eklediği [URUN:...|FIYAT:...] tag'ini dene
-    const tagMatch = metin.match(/\[URUN:([^|\]]+)\|FIYAT:([^\]]+)\]/i);
+    // Gemini tag formatı: [URUN:ürün|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
+    // veya tek fiyat:     [URUN:ürün|FIYAT:$65 USD]
+    const tagMatch = metin.match(/\[URUN:([^|\]]+)\|KAPLAMA:([^|\]]+)\|SIFIRJANT:([^\]]+)\]/i);
     if (tagMatch) {
         return {
-            urunAdi: tagMatch[1].trim(),
-            fiyat:   tagMatch[2].trim(),
+            urunAdi:      tagMatch[1].trim(),
+            kaplamaFiyat: tagMatch[2].trim(),
+            sifirJant:    tagMatch[3].trim(),
+            ciftOpsiyon:  true,
         };
     }
-    // Tag yoksa regex ile bul (fallback)
+    const tekFiyatMatch = metin.match(/\[URUN:([^|\]]+)\|FIYAT:([^\]]+)\]/i);
+    if (tekFiyatMatch) {
+        return {
+            urunAdi:     tekFiyatMatch[1].trim(),
+            fiyat:       tekFiyatMatch[2].trim(),
+            ciftOpsiyon: false,
+        };
+    }
+    // Fallback
     const fiyatMatch = metin.match(/(\$[\d,.]+\s*(?:USD)?|[\d][\d,.]*\s*USD)/i);
     const fiyat = fiyatMatch ? fiyatMatch[0].trim() : 'Belirtilmedi';
     const urunMatch = metin.match(/([\d]{2,4}[.,\/\-][\d]{1,3}[.,\/\-][\d]{1,3}[^\s,\n]{0,20})/i);
     const urunAdi = urunMatch ? urunMatch[0].trim() : 'Talep edilen ürün';
-    return { fiyat, urunAdi };
+    return { fiyat, urunAdi, ciftOpsiyon: false };
 }
 
 // Gemini yanıtından [URUN:|FIYAT:] tag'ini temizle (müşteriye gönderilmeden önce)
@@ -360,7 +371,32 @@ app.post('/webhook', async (req, res) => {
         // AŞAMA 2: Müşteri "EVET" veya "HAYIR" dedi (sipariş teklifi bekleniyor)
         if (session && session.state === 'awaiting_order') {
             if (msgNorm === 'EVET' || msgNorm === 'E' || msgNorm === '1') {
-                // Onay özeti gönder
+
+                if (session.ciftOpsiyon) {
+                    // Çift opsiyon — kaplama mı sıfır jant mı sor
+                    const opsiyonMesaji =
+`🔧 *Hangi seçeneği istersiniz?*
+
+1️⃣ *Kaplama* — ${session.kaplamaFiyat}
+   _(Kendi jantınızı getirirsiniz)_
+
+2️⃣ *Sıfır Jantlı* — ${session.sifirJant}
+   _(Jant dahil teslim edilir)_
+
+*1* veya *2* yazın.`;
+
+                    siparisSession.set(sender, { ...session, state: 'awaiting_option' });
+
+                    await axios.post('https://api.fonnte.com/send', {
+                        target: sender,
+                        message: opsiyonMesaji,
+                        countryCode: '0'
+                    }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                    console.log(`🔧 Opsiyon sorusu gönderildi -> ${sender}`);
+                    return;
+                }
+
+                // Tek fiyat — direkt onay formuna geç
                 const onayMesaji =
 `📋 *SİPARİŞ ONAY FORMU*
 
@@ -395,6 +431,51 @@ Siparişinizi onaylamak için *ONAYLA* yazın.
             } else {
                 // Farklı bir şey yazdı, session'ı sil normal akışa dön
                 siparisSession.delete(sender);
+            }
+        }
+
+        // AŞAMA 2.5: Müşteri kaplama/sıfır jant seçti
+        if (session && session.state === 'awaiting_option') {
+            let secim = null;
+            if (msgNorm === '1' || msgNorm.includes('KAPLAMA')) {
+                secim = { tip: 'Kaplama', fiyat: session.kaplamaFiyat };
+            } else if (msgNorm === '2' || msgNorm.includes('SIFIR') || msgNorm.includes('JANT')) {
+                secim = { tip: 'Sıfır Jantlı', fiyat: session.sifirJant };
+            }
+
+            if (secim) {
+                const onayMesaji =
+`📋 *SİPARİŞ ONAY FORMU*
+
+👤 Müşteri: ${session.cariAdi}
+📦 Ürün: ${session.urunAdi}
+🔧 Seçenek: ${secim.tip}
+💰 Fiyat: ${secim.fiyat}
+📅 Tarih: ${new Date().toLocaleDateString('tr-TR')}
+
+Siparişinizi onaylamak için *ONAYLA* yazın.
+İptal etmek için *İPTAL* yazın.`;
+
+                siparisSession.set(sender, {
+                    ...session,
+                    state: 'awaiting_confirm',
+                    fiyat: `${secim.tip} - ${secim.fiyat}`,
+                });
+
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: onayMesaji,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`📋 Onay formu gönderildi (${secim.tip}) -> ${sender}`);
+                return;
+            } else {
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: '❓ Lütfen *1* (Kaplama) veya *2* (Sıfır Jantlı) yazın.',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                return;
             }
         }
 
@@ -525,7 +606,11 @@ ${JSON.stringify(mv.bakiye)}
 10. Bilinmeyen Müşteri ise: İlk mesajda yalnızca "Sistemimizdeki kaydınızı şu an eşleştiremedim, 0555 016 16 00 numaralı hattımızdan bizimle iletişime geçebilirsiniz" de ve soruyu yanıtla. Sonraki mesajlarda tekrar etme.
 11. Her mesajın sonuna kayıt/uyarı ekleme. Doğal bir asistan gibi konuş.
 12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.
-13. FİYAT İÇEREN YANIT: Eğer yanıtında fiyat (USD veya $) geçiyorsa yanıtının EN SONUNA şu satırı MUTLAKA ekle (müşteri görmez):\n[URUN:ürün adı veya tekerlek ölçüsü|FIYAT:fiyat]\nÖrnek: [URUN:23.5-25 Kaplama|FIYAT:$65 USD]`;
+13. FİYAT İÇEREN YANIT: Eğer yanıtında fiyat (USD veya $) geçiyorsa yanıtının EN SONUNA şu tag'i MUTLAKA ekle (müşteri görmez, sistem okur):
+- Hem kaplama hem sıfır jant fiyatı varsa: [URUN:ürün adı|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
+  Örnek: [URUN:15x5 Tekerlek (Genie)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
+- Sadece tek fiyat varsa: [URUN:ürün adı|FIYAT:fiyat]
+  Örnek: [URUN:23.5-25 Kaplama|FIYAT:$65 USD]`;
 
         console.log('🧠 RobERD düşünüyor...');
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -546,14 +631,17 @@ ${JSON.stringify(mv.bakiye)}
 
         // ─── AŞAMA 1: Bot fiyat verdiyse sipariş teklifi gönder ───
         if (fiyatVarMi(aiResponse)) {
-            const { fiyat, urunAdi } = fiyatBilgisiCikar(aiResponse);
+            const bilgi = fiyatBilgisiCikar(aiResponse);
             siparisSession.set(sender, {
-                state:    'awaiting_order',
+                state:       'awaiting_order',
                 cariAdi,
-                telefon:  sender,
-                urunAdi,
-                fiyat,
-                timestamp: Date.now(),
+                telefon:     sender,
+                urunAdi:     bilgi.urunAdi,
+                fiyat:       bilgi.fiyat || '',
+                kaplamaFiyat: bilgi.kaplamaFiyat || '',
+                sifirJant:   bilgi.sifirJant || '',
+                ciftOpsiyon: bilgi.ciftOpsiyon || false,
+                timestamp:   Date.now(),
             });
             // Kısa bir gecikme ile sipariş sorusunu gönder
             setTimeout(async () => {
