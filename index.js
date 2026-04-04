@@ -664,13 +664,9 @@ ${siparisSession.get(sender)?.modelListesi ? siparisSession.get(sender).modelLis
 ADIM 1 — Müşterinin makine modeli net belli mi?
 - Müşteri "Dingli 12 metre", "Genie 8 metre", "makaslı platform" gibi genel bir ifade kullandıysa → Model belirsizdir.
 - Model belirsizse: Fiyat VERME, lastik ölçüsü VERME.
-  Bunun yerine Makina-Tekerlek Rehberinden o marka/yükseklikle eşleşen TÜM modelleri numaralandırarak listele:
-
-  "Dingli 12 metre makaslı platformlar için elimizdeki modeller şunlardır:
-  1️⃣ JCPT1212DC
-  2️⃣ JCPT1212HD
-  ...
-  Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli."
+  Bunun yerine Makina-Tekerlek Rehberinden o marka/yükseklikle eşleşen TÜM satırları tara ve HEPSİNİ numaralandırarak listele.
+  UYARI: Tablodan kaç satır eşleşiyorsa o kadar madde yaz — eksik bırakma, kendin ekleme, özetleme.
+  Son olarak "Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli." yaz.
 
 ADIM 2 — Müşteri numara veya model adı yazdıysa → Model tespit edildi.
 - Makina-Tekerlek Rehberinden o modelin lastik ölçüsünü ve lastik tipini bul.
