@@ -422,10 +422,7 @@ app.post('/webhook', async (req, res) => {
                     await axios.post('https://api.fonnte.com/send', {
                         target: sender,
                         message: opsiyonMesaji,
-                        buttons: JSON.stringify([
-                            {id:'1', title:'Kaplama'},
-                            {id:'2', title:'Sıfır Jantlı'}
-                        ]),
+
                         countryCode: '0'
                     }, { headers: { 'Authorization': FONNTE_TOKEN } });
                     console.log(`🔧 Opsiyon sorusu gönderildi -> ${sender}`);
@@ -695,11 +692,7 @@ ${JSON.stringify(mv.bakiye)}
             setTimeout(async () => {
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
-                    message: '🛒 Bu ürünü sipariş vermek ister misiniz?',
-                    buttons: JSON.stringify([
-                        {id:'1', title:'✅ Evet, sipariş ver'},
-                        {id:'2', title:'❌ Hayır, vazgeçtim'}
-                    ]),
+                    message: '🛒 *Bu ürünü sipariş vermek ister misiniz?*\n\n1️⃣ Evet, sipariş ver\n2️⃣ Hayır, vazgeçtim\n\nLütfen *1* veya *2* yazın.',
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
                 console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | Ürün: ${bilgi.urunAdi} | Fiyat: ${bilgi.fiyat || bilgi.kaplamaFiyat}`);
