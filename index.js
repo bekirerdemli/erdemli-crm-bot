@@ -616,7 +616,31 @@ ${JSON.stringify(data.urunler || [])}
 ${JSON.stringify(polyfillSonuc)}
 
 ━━━ MAKİNA - TEKERLEK REHBERİ ━━━
-${JSON.stringify(data.makinalar || [])}
+AÇIKLAMA: Bu tablo marka, model, yükseklik, lastik ölçüsü ve lastik tipi bilgilerini içerir.
+Müşteri belirli bir marka/yükseklik/model sorduğunda TABLO'DAN eşleşen TÜM satırları listele, hiçbirini atlama.
+${JSON.stringify(
+    (() => {
+        const msgU = message.toUpperCase();
+        const filtered = (data.makinalar || []).filter(r => {
+            const satirU = JSON.stringify(r).toUpperCase();
+            // Marka filtresi
+            const markalar = ['DINGLI','DİNGLİ','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS'];
+            const markaBulundu = markalar.some(m => msgU.includes(m) && satirU.includes(m));
+            // Yükseklik filtresi (8m, 12m, 16m vb.)
+            const yukseklikMatch = msgU.match(/(\d{1,2})\s*M(ETRE)?/);
+            const yukseklikBulundu = yukseklikMatch ? satirU.includes(yukseklikMatch[1]+'M') || satirU.includes(yukseklikMatch[1]+' M') : false;
+            // Model adı filtresi (JCPT, GS-, EL vb.)
+            const modelMatch = msgU.match(/(JCPT\w*|GS-?\d+|EL\s*\d+|S\d{4}|JLG\w*)/);
+            const modelBulundu = modelMatch ? satirU.includes(modelMatch[0]) : false;
+            if (modelBulundu) return true;
+            if (markaBulundu && yukseklikBulundu) return true;
+            if (markaBulundu) return true;
+            return false;
+        });
+        // Filtre sonuç vermediyse tümünü gönder
+        return filtered.length > 0 ? filtered : (data.makinalar || []);
+    })()
+)}
 
 ━━━ ${cariAdi} - SİPARİŞ GEÇMİŞİ ━━━
 Sütunlar: ID | Kayıt Tarihi | Cari Adı | Üretim Modeli | İşlem Tipi | Sipariş Adeti | Jant Teslim Alma Tarihi | Jant Teslim Alma | Jant Kontrol | Teslim Etme Tarihi | Teslim Edilen | Kalan | Üretim Sayısı | Tekerlek Tanımı | Anlaşılan Fiyat | Açıklama
