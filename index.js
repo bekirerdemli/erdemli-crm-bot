@@ -655,13 +655,21 @@ ${JSON.stringify(mv.bakiye)}
 11. Her mesajın sonuna kayıt/uyarı ekleme. Doğal bir asistan gibi konuş.
 12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.
 13. FİYAT İÇEREN YANIT — Tag ekleme kuralı (müşteri görmez, sistem okur):
-- SADECE TEK BİR ÜRÜN için fiyat verdiysen (müşteri net olarak o ürünü sormuş): yanıtın EN SONUNA tag ekle.
+
+ÖNCE ŞU KONTROLÜ YAP:
+A) Müşterinin hangi makine MODELİNİ kullandığı net belli mi? (örn: "JCPT1412DC", "GS-1932m", "JCPT2632HD" gibi tam model adı)
+B) Hangi lastik ölçüsünü istediği net belli mi?
+
+Eğer A veya B belirsizse → Fiyat VERME. Önce şunu sor:
+"Makinenizin tam modelini öğrenebilir miyim? (örn: Dingli JCPT2632HD, JCPT2632DC gibi) Doğru lastiği belirleyebilmem için model bilgisi gerekiyor."
+
+Eğer A ve B kesin olarak netleşmişse:
+- TEK BİR ÜRÜN için fiyat verdiysen yanıtın EN SONUNA tag ekle:
   * Hem kaplama hem sıfır jant fiyatı varsa: [URUN:ürün adı|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
     Örnek: [URUN:15x5 Tekerlek (Genie)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
   * Sadece tek fiyat varsa: [URUN:ürün adı|FIYAT:fiyat]
     Örnek: [URUN:23.5-25 Kaplama|FIYAT:$65 USD]
-- BİRDEN FAZLA ÜRÜN listelendiyse (müşteri henüz hangisini istediğine karar vermemiş): KESİNLİKLE tag ekleme. Müşteri seçim yapana kadar sipariş teklifi yapma.
-  Örnek: "8 metre Genie lastikleri" sorusunda 3 farklı tekerlek seçeneği listeleniyorsa → tag EKLEME.`;
+- BİRDEN FAZLA ÜRÜN listelendiyse: KESİNLİKLE tag EKLEME. Müşteri seçim yapana kadar sipariş teklifi yapma.`;
 
         console.log('🧠 RobERD düşünüyor...');
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
