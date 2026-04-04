@@ -48,6 +48,9 @@ app.get('/modeller', async (req, res) => {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
 const SID = '1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M';
+// WhatsApp siparişlerinin yazılacağı Sheets ID (Erdemli Siparişler dosyası)
+// Eğer aynı dosyaysa SID ile aynı bırakın, farklıysa URL'den alıp buraya yazın
+const SIPARIS_SID = process.env.SIPARIS_SHEETS_ID || SID;
 const IID = '1aHKb7lv6sei2ExnIB5Li0pEtygRo3hWLxTJGiHbda0g';
 
 const URLS = {
@@ -289,7 +292,7 @@ async function siparisiSheetsYaz(siparis) {
         const sheets = google.sheets({ version: 'v4', auth });
         const tarih = new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
         await sheets.spreadsheets.values.append({
-            spreadsheetId: SID,
+            spreadsheetId: SIPARIS_SID,
             range: 'WhatsApp Siparisleri!A:G',
             valueInputOption: 'USER_ENTERED',
             requestBody: {
@@ -313,15 +316,30 @@ async function siparisiSheetsYaz(siparis) {
 }
 
 function fiyatVarMi(metin) {
-    return /(\$[\d,.]+|[\d][\d,.]*\s*USD)/i.test(metin);
+    // Hem USD/$ içeren normal fiyat hem de [URUN:|FIYAT:] tag'i ara
+    return /(\$[\d,.]+|[\d][\d,.]*\s*USD|\[URUN:)/i.test(metin);
 }
 
 function fiyatBilgisiCikar(metin) {
+    // Önce Gemini'nin eklediği [URUN:...|FIYAT:...] tag'ini dene
+    const tagMatch = metin.match(/\[URUN:([^|\]]+)\|FIYAT:([^\]]+)\]/i);
+    if (tagMatch) {
+        return {
+            urunAdi: tagMatch[1].trim(),
+            fiyat:   tagMatch[2].trim(),
+        };
+    }
+    // Tag yoksa regex ile bul (fallback)
     const fiyatMatch = metin.match(/(\$[\d,.]+\s*(?:USD)?|[\d][\d,.]*\s*USD)/i);
     const fiyat = fiyatMatch ? fiyatMatch[0].trim() : 'Belirtilmedi';
-    const urunMatch = metin.match(/([\d]{3,4}[\/\-x][\d]{2,3}[\/\-x][\d]{2,3}[^\s,\n]*|[\d.]+["\u2033]?\s*(?:lastik|tekerlek)[^\n,]{0,40})/i);
-    const urunAdi = urunMatch ? urunMatch[0].trim() : 'Talep edilen urun';
+    const urunMatch = metin.match(/([\d]{2,4}[.,\/\-][\d]{1,3}[.,\/\-][\d]{1,3}[^\s,\n]{0,20})/i);
+    const urunAdi = urunMatch ? urunMatch[0].trim() : 'Talep edilen ürün';
     return { fiyat, urunAdi };
+}
+
+// Gemini yanıtından [URUN:|FIYAT:] tag'ini temizle (müşteriye gönderilmeden önce)
+function temizleYanit(metin) {
+    return metin.replace(/\s*\[URUN:[^\]]+\]/gi, '').trim();
 }
 
 app.post('/webhook', async (req, res) => {
@@ -506,7 +524,8 @@ ${JSON.stringify(mv.bakiye)}
 9. Cevap verilerde YOKSA (ne teknik bilgi ne müşteri verisi): "Yetkiliye aktarıyorum, en kısa sürede dönüş yapacaklar."
 10. Bilinmeyen Müşteri ise: İlk mesajda yalnızca "Sistemimizdeki kaydınızı şu an eşleştiremedim, 0555 016 16 00 numaralı hattımızdan bizimle iletişime geçebilirsiniz" de ve soruyu yanıtla. Sonraki mesajlarda tekrar etme.
 11. Her mesajın sonuna kayıt/uyarı ekleme. Doğal bir asistan gibi konuş.
-12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.`;
+12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.
+13. FİYAT İÇEREN YANIT: Eğer yanıtında fiyat (USD veya $) geçiyorsa yanıtının EN SONUNA şu satırı MUTLAKA ekle (müşteri görmez):\n[URUN:ürün adı veya tekerlek ölçüsü|FIYAT:fiyat]\nÖrnek: [URUN:23.5-25 Kaplama|FIYAT:$65 USD]`;
 
         console.log('🧠 RobERD düşünüyor...');
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -514,9 +533,12 @@ ${JSON.stringify(mv.bakiye)}
         const aiResponse = result.response.text();
         console.log('✅ RobERD yanıtladı:', aiResponse);
 
+        // Tag'i müşteriye göstermeden önce temizle
+        const temizMesaj = temizleYanit(aiResponse);
+
         await axios.post('https://api.fonnte.com/send', {
             target: sender,
-            message: aiResponse,
+            message: temizMesaj,
             countryCode: '0'
         }, { headers: { 'Authorization': FONNTE_TOKEN } });
 
