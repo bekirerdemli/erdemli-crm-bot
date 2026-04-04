@@ -3,8 +3,14 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { google } = require('googleapis');
 
 const app = express();
+
+// ─── SİPARİŞ ONAY AKIŞI — her numara için bekleyen sipariş durumu ───
+// Olası state değerleri: 'awaiting_order' | 'awaiting_confirm'
+const siparisSession = new Map();
+// { state, cariAdi, telefon, urunAdi, fiyat, adet, timestamp }
 
 // Konuşma takibi — her numara için ilk mesaj mı kontrol eder (24 saat sıfırlanır)
 const konusmaBellegi = new Map();
@@ -264,6 +270,60 @@ function musteriFiltrele(data, cariAdi) {
     };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// GOOGLE SHEETS — SERVİS HESABI İLE YAZ
+// .env içinde GOOGLE_SERVICE_ACCOUNT_JSON='{...json...}' olmalı
+// ═══════════════════════════════════════════════════════════════
+async function sheetsAuth() {
+    const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    return auth;
+}
+
+async function siparisiSheetsYaz(siparis) {
+    try {
+        const auth = await sheetsAuth();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const tarih = new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: SID,
+            range: 'WhatsApp Siparisleri!A:G',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [[
+                    tarih,
+                    siparis.cariAdi,
+                    siparis.telefon,
+                    siparis.urunAdi,
+                    siparis.fiyat,
+                    siparis.adet || 1,
+                    'WhatsApp Bot'
+                ]],
+            },
+        });
+        console.log(`Siparis Sheets'e yazildi: ${siparis.cariAdi}`);
+        return true;
+    } catch (err) {
+        console.error('Sheets yazma hatasi:', err.message);
+        return false;
+    }
+}
+
+function fiyatVarMi(metin) {
+    return /(\$[\d,.]+|[\d][\d,.]*\s*USD)/i.test(metin);
+}
+
+function fiyatBilgisiCikar(metin) {
+    const fiyatMatch = metin.match(/(\$[\d,.]+\s*(?:USD)?|[\d][\d,.]*\s*USD)/i);
+    const fiyat = fiyatMatch ? fiyatMatch[0].trim() : 'Belirtilmedi';
+    const urunMatch = metin.match(/([\d]{3,4}[\/\-x][\d]{2,3}[\/\-x][\d]{2,3}[^\s,\n]*|[\d.]+["\u2033]?\s*(?:lastik|tekerlek)[^\n,]{0,40})/i);
+    const urunAdi = urunMatch ? urunMatch[0].trim() : 'Talep edilen urun';
+    return { fiyat, urunAdi };
+}
+
 app.post('/webhook', async (req, res) => {
     res.status(200).send({ status: true });
     const sender  = req.body.sender;
@@ -272,6 +332,97 @@ app.post('/webhook', async (req, res) => {
 
     try {
         console.log(`\n💬 ${sender} | ${message}`);
+
+        // ═══════════════════════════════════════════════════════════════
+        // SİPARİŞ ONAY AKIŞI — Gemini'ye gerek yok, doğrudan yönetilir
+        // ═══════════════════════════════════════════════════════════════
+        const session = siparisSession.get(sender);
+        const msgNorm = message.trim().toUpperCase();
+
+        // AŞAMA 2: Müşteri "EVET" veya "HAYIR" dedi (sipariş teklifi bekleniyor)
+        if (session && session.state === 'awaiting_order') {
+            if (msgNorm === 'EVET' || msgNorm === 'E' || msgNorm === '1') {
+                // Onay özeti gönder
+                const onayMesaji =
+`📋 *SİPARİŞ ONAY FORMU*
+
+👤 Müşteri: ${session.cariAdi}
+📦 Ürün: ${session.urunAdi}
+💰 Fiyat: ${session.fiyat}
+📅 Tarih: ${new Date().toLocaleDateString('tr-TR')}
+
+Siparişinizi onaylamak için *ONAYLA* yazın.
+İptal etmek için *İPTAL* yazın.`;
+
+                siparisSession.set(sender, { ...session, state: 'awaiting_confirm' });
+
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: onayMesaji,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+
+                console.log(`📋 Onay formu gönderildi -> ${sender}`);
+                return;
+
+            } else if (msgNorm === 'HAYIR' || msgNorm === 'H' || msgNorm === '2') {
+                siparisSession.delete(sender);
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: 'Anlaşıldı, sipariş verilmedi. Başka bir konuda yardımcı olabilir miyim? 😊',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`❌ Sipariş iptal edildi -> ${sender}`);
+                return;
+            } else {
+                // Farklı bir şey yazdı, session'ı sil normal akışa dön
+                siparisSession.delete(sender);
+            }
+        }
+
+        // AŞAMA 3: Müşteri "ONAYLA" veya "İPTAL" dedi
+        if (session && session.state === 'awaiting_confirm') {
+            if (msgNorm === 'ONAYLA' || msgNorm === 'ONAY' || msgNorm === 'ONAYLA.' || msgNorm === 'EVET') {
+                // Google Sheets'e yaz
+                const yazildi = await siparisiSheetsYaz({
+                    cariAdi: session.cariAdi,
+                    telefon: sender,
+                    urunAdi: session.urunAdi,
+                    fiyat:   session.fiyat,
+                    adet:    1,
+                });
+                siparisSession.delete(sender);
+
+                const sonucMesaji = yazildi
+                    ? `✅ *Siparişiniz alındı!*\n\nEn kısa sürede sizinle iletişime geçeceğiz. Teşekkürler! 🙏`
+                    : `✅ *Siparişiniz alındı!*\n\nEkibimiz en kısa sürede sizi arayacak.`;
+
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: sonucMesaji,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+
+                console.log(`✅ Sipariş onaylandı ve kaydedildi -> ${sender}`);
+                return;
+
+            } else if (msgNorm === 'İPTAL' || msgNorm === 'IPTAL' || msgNorm === 'HAYIR') {
+                siparisSession.delete(sender);
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: 'Sipariş iptal edildi. Başka bir konuda yardımcı olabilir miyim? 😊',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`❌ Sipariş iptal edildi -> ${sender}`);
+                return;
+            } else {
+                siparisSession.delete(sender);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // NORMAL AKIŞ — Gemini ile yanıt üret
+        // ═══════════════════════════════════════════════════════════════
         const data = await fetchAllData();
         const senderClean = cleanPhone(sender);
 
@@ -370,6 +521,28 @@ ${JSON.stringify(mv.bakiye)}
         }, { headers: { 'Authorization': FONNTE_TOKEN } });
 
         console.log(`🚀 GÖNDERİLDİ -> ${sender}`);
+
+        // ─── AŞAMA 1: Bot fiyat verdiyse sipariş teklifi gönder ───
+        if (fiyatVarMi(aiResponse)) {
+            const { fiyat, urunAdi } = fiyatBilgisiCikar(aiResponse);
+            siparisSession.set(sender, {
+                state:    'awaiting_order',
+                cariAdi,
+                telefon:  sender,
+                urunAdi,
+                fiyat,
+                timestamp: Date.now(),
+            });
+            // Kısa bir gecikme ile sipariş sorusunu gönder
+            setTimeout(async () => {
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: '🛒 Bu ürünü sipariş vermek ister misiniz?\n\n✅ *EVET*\n❌ *HAYIR*',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | Ürün: ${urunAdi} | Fiyat: ${fiyat}`);
+            }, 1500);
+        }
 
     } catch (error) {
         console.error('❌ Hata:', error.message || error);
