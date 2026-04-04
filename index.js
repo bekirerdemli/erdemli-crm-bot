@@ -649,11 +649,14 @@ ${JSON.stringify(mv.bakiye)}
 10. Bilinmeyen Müşteri ise: İlk mesajda yalnızca "Sistemimizdeki kaydınızı şu an eşleştiremedim, 0555 016 16 00 numaralı hattımızdan bizimle iletişime geçebilirsiniz" de ve soruyu yanıtla. Sonraki mesajlarda tekrar etme.
 11. Her mesajın sonuna kayıt/uyarı ekleme. Doğal bir asistan gibi konuş.
 12. Kısa, samimi ve profesyonel Türkçe kullan. Gereksiz uzatma yapma.
-13. FİYAT İÇEREN YANIT: Eğer yanıtında fiyat (USD veya $) geçiyorsa yanıtının EN SONUNA şu tag'i MUTLAKA ekle (müşteri görmez, sistem okur):
-- Hem kaplama hem sıfır jant fiyatı varsa: [URUN:ürün adı|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
-  Örnek: [URUN:15x5 Tekerlek (Genie)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
-- Sadece tek fiyat varsa: [URUN:ürün adı|FIYAT:fiyat]
-  Örnek: [URUN:23.5-25 Kaplama|FIYAT:$65 USD]`;
+13. FİYAT İÇEREN YANIT — Tag ekleme kuralı (müşteri görmez, sistem okur):
+- SADECE TEK BİR ÜRÜN için fiyat verdiysen (müşteri net olarak o ürünü sormuş): yanıtın EN SONUNA tag ekle.
+  * Hem kaplama hem sıfır jant fiyatı varsa: [URUN:ürün adı|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
+    Örnek: [URUN:15x5 Tekerlek (Genie)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
+  * Sadece tek fiyat varsa: [URUN:ürün adı|FIYAT:fiyat]
+    Örnek: [URUN:23.5-25 Kaplama|FIYAT:$65 USD]
+- BİRDEN FAZLA ÜRÜN listelendiyse (müşteri henüz hangisini istediğine karar vermemiş): KESİNLİKLE tag ekleme. Müşteri seçim yapana kadar sipariş teklifi yapma.
+  Örnek: "8 metre Genie lastikleri" sorusunda 3 farklı tekerlek seçeneği listeleniyorsa → tag EKLEME.`;
 
         console.log('🧠 RobERD düşünüyor...');
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
