@@ -630,23 +630,28 @@ Lütfen *1* veya *2* yazın.`;
                 });
 
                 if (fiyatEslesen.length > 0) {
-                    // Fiyat listesindeki ürünleri listele
+                    // Sadece Tekerlek Tanımı kolonunu göster — fiyat gösterme
                     const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                    const fiyatKolonlar = Object.keys(fiyatEslesen[0]);
+                    console.log('🔍 Fiyat listesi kolonları:', fiyatKolonlar.join(' | '));
+                    // Her zaman ilk kolon = Tekerlek Tanımı
+                    const tekerTanimKol = fiyatKolonlar[0];
+
                     const fiyatListeStr = fiyatEslesen.map((r, i) => {
-                        const vals = Object.values(r).filter(v => v && v.toString().trim());
-                        return (emojiR[i] || (i+1)+'.') + ' ' + vals.join(' | ');
+                        const tanim = r[tekerTanimKol] || '';
+                        return (emojiR[i] || (i+1)+'.') + ' ' + tanim;
                     }).join('\n');
 
                     const fiyatMesaj = `${markaBul} için elimizdeki lastik seçenekleri:\n\n${fiyatListeStr}\n\nHangi lastiği kullanıyorsunuz? Numarasını yazmanız yeterli.`;
 
-                    // Session'a kaydet
+                    // Session'a kaydet — stokAdi = Tekerlek Tanımı (fiyat için)
                     const mevcutSes2 = siparisSession.get(sender) || {};
                     siparisSession.set(sender, {
                         ...mevcutSes2,
-                        modelListesi: fiyatEslesen.map(r => Object.values(r)[0]),
+                        modelListesi: fiyatEslesen.map(r => r[tekerTanimKol] || ''),
                         modelDetay: fiyatEslesen.map(r => ({
-                            model:   Object.values(r)[0] || '',
-                            stokAdi: Object.values(r)[0] || '',
+                            model:   r[tekerTanimKol] || '',
+                            stokAdi: r[tekerTanimKol] || '',
                             tip:     '',
                         }))
                     });
