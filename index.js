@@ -433,6 +433,33 @@ app.post('/webhook', async (req, res) => {
         const session = siparisSession.get(sender);
         const msgNorm = message.trim().toUpperCase();
 
+        // AŞAMA 1.5: Müşteri model listesinden numara seçti
+        if (session && session.state === 'awaiting_model') {
+            const secimNo = parseInt(msgNorm) - 1;
+            const detay = session.modelDetay && session.modelDetay[secimNo];
+
+            if (!isNaN(secimNo) && secimNo >= 0 && detay) {
+                // Seçilen modeli session'dan sil, Gemini'ye sor
+                const mevcutSes = siparisSession.get(sender) || {};
+                siparisSession.set(sender, {
+                    ...mevcutSes,
+                    state: null,
+                    secilenModel: detay.model,
+                    secilenStokAdi: detay.stokAdi,
+                });
+                sessionKaydet(siparisSession);
+                console.log(`✅ Model seçildi: ${detay.model} | Stok: ${detay.stokAdi}`);
+                // Gemini'ye git — fiyat sorusu olarak devam et
+            } else {
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: `❓ Lütfen listeden geçerli bir numara yazın (1-${(session.modelDetay || []).length}).`,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                return;
+            }
+        }
+
         // AŞAMA 2: Müşteri "EVET" veya "HAYIR" dedi (sipariş teklifi bekleniyor)
         if (session && session.state === 'awaiting_order') {
             if (msgNorm === '1' || msgNorm.includes('EVET') || msgNorm.includes('SİPARİŞ VER') || msgNorm.includes('SIPARIS VER')) {
@@ -708,10 +735,11 @@ Lütfen *1* veya *2* yazın.`;
 
                     const fiyatMesaj = `${markaBul} için elimizdeki lastik seçenekleri:\n\n${fiyatListeStr}\n\nHangi lastiği kullanıyorsunuz? Numarasını yazmanız yeterli.`;
 
-                    // Session'a kaydet — stokAdi = Tekerlek Tanımı (fiyat için)
+                    // Session'a kaydet — state: awaiting_model
                     const mevcutSes2 = siparisSession.get(sender) || {};
                     siparisSession.set(sender, {
                         ...mevcutSes2,
+                        state: 'awaiting_model',
                         modelListesi: fiyatEslesen.map(r => r[tekerTanimKol] || ''),
                         modelDetay: fiyatEslesen.map(r => ({
                             model:   r[tekerTanimKol] || '',
@@ -759,10 +787,11 @@ Lütfen *1* veya *2* yazın.`;
                 const baslik = `${markaBul || 'İlgili'} ${yukseklikBul ? yukseklikBul[1]+' metre ' : ''}platform için lastik modellerimiz:\n`;
                 const tamMesaj = baslik + '\n' + listeStr + '\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.';
 
-                // Session'a kaydet
+                // Session'a kaydet — state: awaiting_model
                 const mevcutSes = siparisSession.get(sender) || {};
                 siparisSession.set(sender, {
                     ...mevcutSes,
+                    state: 'awaiting_model',
                     modelListesi: eslesenMak.map(r => Object.values(r)[1]),
                     modelDetay: eslesenMak.map(r => ({
                         model:   Object.values(r)[1] || '',
@@ -923,6 +952,15 @@ ${JSON.stringify(mv.islemler)}
 ━━━ ${cariAdi} - BORÇ BAKİYE DURUMU ━━━
 Sütunlar: Frma | SUM/Tutar (toplam satış) | SUM/Tahsilat (toplam ödeme) | Toplam Bakiye (net borç) | Vadeli Ciro | Vadesi Geçmiş Bakiye | Kalan Vade Gün
 ${JSON.stringify(mv.bakiye)}
+
+━━━ SEÇİLEN MODEL (Müşteri az önce listeden seçim yaptıysa) ━━━
+${(() => {
+    const ses = siparisSession.get(sender);
+    if (ses && ses.secilenModel) {
+        return `Müşteri seçti → Model: ${ses.secilenModel} | Stok Adı: ${ses.secilenStokAdi}\nBu stok adını fiyat listesinde bul, fiyatı ver ve sipariş teklifi yap.`;
+    }
+    return 'Henüz model seçimi yapılmadı';
+})()}
 
 ━━━ SON LİSTELENEN MODELLER (Müşteri numara yazdıysa bu listeye göre eşleştir) ━━━
 ${(() => {
