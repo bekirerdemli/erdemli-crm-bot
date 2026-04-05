@@ -645,14 +645,17 @@ ${(() => {
             const tekerkolKol = kolonAdlari.find(k => /tekerlek.tan/i.test(k)) || kolonAdlari.find(k => /stok|urun|ürün/i.test(k)) || kolonAdlari[3];
 
             const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-            // Kolon adlarını bul
+            // Sütun adları: Marka | Model | Makina Tipi | Lastik Ölçüsü Inch | Lastik Ölçüsü Metrik | JantTipi | STOK ADI
             const kolonlar2 = Object.keys(eslesen[0]);
-            const markaKol   = kolonlar2.find(k => /marka/i.test(k))    || kolonlar2[0];
-            const modelKol2  = kolonlar2.find(k => /model/i.test(k))    || kolonlar2[1];
-            const tipKol     = kolonlar2.find(k => /tip/i.test(k))      || kolonlar2[2];
-            const olcuKol    = kolonlar2.find(k => /inch/i.test(k))     || kolonlar2[3];
-            const jantKol    = kolonlar2.find(k => /jant/i.test(k))     || kolonlar2[5];
-            const stokKol    = kolonlar2.find(k => /stok/i.test(k))     || kolonlar2[kolonlar2.length-1];
+            console.log('🔍 Makina kolonları:', kolonlar2.join(' | '));
+
+            const markaKol  = kolonlar2[0];
+            const modelKol2 = kolonlar2[1];
+            const tipKol    = kolonlar2[2];
+            const olcuInch  = kolonlar2[3];
+            const olcuMetrik= kolonlar2[4];
+            const jantTipi  = kolonlar2[5];
+            const stokKol   = kolonlar2[6] || kolonlar2[kolonlar2.length-1];
 
             const liste = eslesen.map((r, i) => {
                 const emoji = emojiRakam[i] || (i+1)+'.';
@@ -660,17 +663,16 @@ ${(() => {
                     r[markaKol],
                     r[modelKol2],
                     r[tipKol],
-                    r[olcuKol],
-                    r[jantKol],
+                    r[olcuInch],
+                    r[jantTipi],
                     r[stokKol]
                 ].filter(v => v && v.toString().trim());
                 return emoji + ' ' + parca.join(' | ');
             }).join('\n');
 
             // Session'a STOK ADI ile kaydet
-            const kolonlar3 = Object.keys(eslesen[0]);
-            const stokKol2  = kolonlar3.find(k => /stok/i.test(k)) || kolonlar3[kolonlar3.length-1];
-            const modelKol3 = kolonlar3.find(k => /model/i.test(k)) || kolonlar3[1];
+            const stokKol2  = stokKol;
+            const modelKol3 = modelKol2;
 
             // Session'a STOK ADI ile kaydet — fiyat listesiyle eşleştirmek için
             const mevcut2 = siparisSession.get(sender) || {};
