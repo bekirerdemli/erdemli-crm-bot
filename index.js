@@ -645,21 +645,42 @@ ${(() => {
             const tekerkolKol = kolonAdlari.find(k => /tekerlek.tan/i.test(k)) || kolonAdlari.find(k => /stok|urun|ürün/i.test(k)) || kolonAdlari[3];
 
             const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+            // Kolon adlarını bul
+            const kolonlar2 = Object.keys(eslesen[0]);
+            const markaKol   = kolonlar2.find(k => /marka/i.test(k))    || kolonlar2[0];
+            const modelKol2  = kolonlar2.find(k => /model/i.test(k))    || kolonlar2[1];
+            const tipKol     = kolonlar2.find(k => /tip/i.test(k))      || kolonlar2[2];
+            const olcuKol    = kolonlar2.find(k => /inch/i.test(k))     || kolonlar2[3];
+            const jantKol    = kolonlar2.find(k => /jant/i.test(k))     || kolonlar2[5];
+            const stokKol    = kolonlar2.find(k => /stok/i.test(k))     || kolonlar2[kolonlar2.length-1];
+
             const liste = eslesen.map((r, i) => {
-                const emoji = emojiRakam[i] || `${i+1}.`;
-                // Tüm kolon değerlerini al (boş olmayanları)
-                const vals = Object.values(r).filter(v => v && v.toString().trim());
-                return `${emoji} ${vals.join(' | ')}`;
+                const emoji = emojiRakam[i] || (i+1)+'.';
+                const parca = [
+                    r[markaKol],
+                    r[modelKol2],
+                    r[tipKol],
+                    r[olcuKol],
+                    r[jantKol],
+                    r[stokKol]
+                ].filter(v => v && v.toString().trim());
+                return emoji + ' ' + parca.join(' | ');
             }).join('\n');
 
-            // Session'a tam satır verilerini kaydet (Tekerlek Tanımı dahil)
+            // Session'a STOK ADI ile kaydet
+            const kolonlar3 = Object.keys(eslesen[0]);
+            const stokKol2  = kolonlar3.find(k => /stok/i.test(k)) || kolonlar3[kolonlar3.length-1];
+            const modelKol3 = kolonlar3.find(k => /model/i.test(k)) || kolonlar3[1];
+
+            // Session'a STOK ADI ile kaydet — fiyat listesiyle eşleştirmek için
             const mevcut2 = siparisSession.get(sender) || {};
-            siparisSession.set(sender, { 
-                ...mevcut2, 
-                modelListesi: eslesen.map(r => r[modelKol] || Object.values(r)[1]),
+            siparisSession.set(sender, {
+                ...mevcut2,
+                modelListesi: eslesen.map(r => r[modelKol3] || Object.values(r)[1]),
                 modelDetay: eslesen.map(r => ({
-                    model: r[modelKol] || Object.values(r)[1],
-                    tekerTanim: r[tekerkolKol] || Object.values(r)[3] || ''
+                    model:     r[modelKol3]  || Object.values(r)[1],
+                    stokAdi:   r[stokKol2]   || Object.values(r)[Object.values(r).length-1] || '',
+                    tip:       r[tipKol]     || '',
                 }))
             });
             sessionKaydet(siparisSession);
@@ -695,7 +716,7 @@ ${(() => {
     const ses = siparisSession.get(sender);
     if (!ses) return 'Henüz model listesi sunulmadı';
     if (ses.modelDetay && ses.modelDetay.length > 0) {
-        return ses.modelDetay.map((m, i) => `${i+1}. Model: ${m.model} | Tekerlek Tanımı: ${m.tekerTanim}`).join('\n');
+        return ses.modelDetay.map((m, i) => `${i+1}. Model: ${m.model} | Stok Adı (fiyat listesiyle eşleşir): ${m.stokAdi} | Tip: ${m.tip}`).join('\n');
     }
     if (ses.modelListesi && ses.modelListesi.length > 0) {
         return ses.modelListesi.map((m, i) => `${i+1}. ${m}`).join('\n');
@@ -731,16 +752,16 @@ ADIM 1 — Müşterinin makine modeli net belli mi?
 
 ADIM 2 — Müşteri numara veya model adı yazdıysa → Model tespit edildi.
 - SON LİSTELENEN MODELLER bölümündeki listeye göre seçilen modeli bul.
-- Makina-Tekerlek Rehberinden o modelin "Tekerlek Tanımı" kolonundaki değeri bul. (örn: "15x5 Tekerlek (Dingli HA)", "15x5 Tekerlek (Dingli DC)" vb.)
-- Bu "Tekerlek Tanımı" değerini ÜRÜN FİYAT LİSTESİNDEKİ "Tekerlek Tanımı" kolonuyla birebir eşleştir.
+- SON LİSTELENEN MODELLER bölümünde seçilen modelin "Stok Adı" değerini bul.
+- Bu "Stok Adı" değerini ÜRÜN FİYAT LİSTESİNDEKİ "Tekerlek Tanımı" kolonuyla birebir eşleştir.
 - Eşleşen satırın kaplama ve sıfır jant fiyatlarını al.
 
 EŞLEŞTIRME KURALI:
-  → Makina rehberindeki "Tekerlek Tanımı" = Fiyat listesindeki "Tekerlek Tanımı" 
+  → Makina rehberindeki "Stok Adı" = Fiyat listesindeki "Tekerlek Tanımı"
   → Birebir aynı isimle eşleştir. Bulamazsan en yakın ölçü/isim eşleşmesini kullan.
 
 - Fiyatı bulduktan sonra yanıtın EN SONUNA tag ekle:
-  * Hem kaplama hem sıfır jant varsa: [URUN:Tekerlek Tanımı değeri|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
+  * Hem kaplama hem sıfır jant varsa: [URUN:Stok Adı değeri|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
     Örnek: [URUN:15x5 Tekerlek (Dingli HA)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
   * Tek fiyat varsa: [URUN:Tekerlek Tanımı değeri|FIYAT:fiyat]
 
