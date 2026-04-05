@@ -301,6 +301,19 @@ function teknikBilgiOzet(teknikData) {
 function musteriFiltrele(data, cariAdi) {
     if (cariAdi === 'Bilinmeyen Musteri') return {};
     const cu = cariAdi.toUpperCase();
+
+    // Erdemli Kauçuk yetkilileri tüm verileri görebilir
+    const erdemliYetkili = cu.includes('ERDEMLİ KAUÇUK') || cu.includes('ERDEMLİ KAUCUK') || cu.includes('ERDEMLI KAUCUK') || cu.includes('ERDEMLI KAU');
+    if (erdemliYetkili) {
+        return {
+            siparisler:     data.siparisler     || [],
+            acikSiparisler: data.acikSiparisler || [],
+            eksikJant:      data.eksikJant      || [],
+            islemler:       data.islemler       || [],
+            bakiye:         data.bakiye         || [],
+        };
+    }
+
     return {
         siparisler:     (data.siparisler     || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || '').toUpperCase().includes(cu)),
         acikSiparisler: (data.acikSiparisler || []).filter(r => (r['Cari Adı'] || r['Cari Adi'] || '').toUpperCase().includes(cu)),
@@ -308,6 +321,11 @@ function musteriFiltrele(data, cariAdi) {
         islemler:       (data.islemler       || []).filter(r => (r['Frma'] || r['Firma'] || '').toUpperCase().includes(cu)),
         bakiye:         (data.bakiye         || []).filter(r => (r['Frma'] || '').toUpperCase().includes(cu)),
     };
+}
+
+function erdemliYetkiliMi(cariAdi) {
+    const cu = (cariAdi || '').toUpperCase();
+    return cu.includes('ERDEMLİ KAUÇUK') || cu.includes('ERDEMLİ KAUCUK') || cu.includes('ERDEMLI KAUCUK') || cu.includes('ERDEMLI KAU');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -446,6 +464,7 @@ app.post('/webhook', async (req, res) => {
                     state: null,
                     secilenModel: detay.model,
                     secilenStokAdi: detay.stokAdi,
+                    erdemliYetkili: erdemliYetkiliMi(cariAdi),
                 });
                 sessionKaydet(siparisSession);
                 console.log(`✅ Model seçildi: ${detay.model} | Stok: ${detay.stokAdi}`);
@@ -980,6 +999,7 @@ ${(() => {
 
 ━━━ YANIT KURALLARI ━━━
 1. KENDİNİ TANITMA: Sadece konuşmanın İLK mesajında "Ben RobERD, Erdemli Kauçuk'un yapay zeka asistanıyım" de. Sonraki mesajlarda asla tekrar etme.
+1b. ERDEMLİ KAUÇUK YETKİLİSİ KURALI: Eğer Cari Adı "Erdemli Kauçuk" içeriyorsa bu kişi firma yetkilisidir. Tüm carilerin verilerini görebilir, sorgulayabilir. Ancak bu kişiye KESİNLİKLE sipariş teklifi yapma, "sipariş vermek ister misiniz?" SORMA.
 2. KAYIT UYARISI: Sadece BİR KEZ ve yalnızca şüphe varsa "Sistemimizdeki kaydınızı şu an eşleştiremedim, detaylar için 0555 016 16 00" de. ASLA "kaydınız yok" veya "sisteme kayıtlı değilsiniz" gibi kesin ifadeler kullanma. Aynı konuşmada tekrar etme.
 3. TEKNİK sorularda (hata kodu, makine özelliği, lastik ölçüsü, polyfill, makina-lastik uyumu, bakım bilgisi vb.) Teknik Bilgi Tabanını kullan. Bu bilgiler herkese verilebilir. TEKNİK BİLGİ TABANINDA CEVAP VARSA ONU KULLAN, yetkiliye aktarma.
 4. MÜŞTERİYE ÖZEL sorularda (sipariş, bakiye, fiyat) YALNIZCA bu müşterinin verilerini kullan. Başka firma verisi ASLA paylaşma.
@@ -1057,7 +1077,7 @@ EŞLEŞTIRME KURALI:
         }
 
         // ─── AŞAMA 1: Bot fiyat verdiyse sipariş teklifi gönder ───
-        if (fiyatVarMi(aiResponse) && !aiResponse.includes('[[DIREKT_GONDER]]')) {
+        if (fiyatVarMi(aiResponse) && !aiResponse.includes('[[DIREKT_GONDER]]') && !erdemliYetkiliMi(cariAdi)) {
             const bilgi = fiyatBilgisiCikar(aiResponse);
             siparisSession.set(sender, {
                 state:       'awaiting_order',
