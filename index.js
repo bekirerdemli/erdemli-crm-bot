@@ -664,8 +664,8 @@ ${(() => {
             });
             sessionKaydet(siparisSession);
 
-            return `Müşteri model seçimi yapacak. Aşağıdaki listeyi OLDUĞU GİBİ sun, HİÇBİR SATIRI ATLAMA (toplam ${eslesen.length} model).
-Her satırda Marka, Model, Platform Türü, Lastik Ölçüsü, Jant Ölçüsü ve Lastik Tipi bilgileri bulunmaktadır — hepsini göster:\n${liste}\n\nSon olarak "Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli." yaz.`;
+            const baslik = `${markaBulundu || 'İlgili'} ${yukseklikMatch ? yukseklikMatch[1]+' metre ' : ''}platform için modellerimiz:`;
+            return `[[DIREKT_GONDER]]${baslik}\n\n${liste}\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.`;
         }
     }
     return (data.makinalar || []).map(r => Object.values(r).join(' | ')).join('\n');
@@ -755,12 +755,16 @@ EŞLEŞTIRME KURALI:
         // Tag'i müşteriye göstermeden önce temizle
         const temizMesaj = temizleYanit(aiResponse);
 
+        // Direkt gönderilecek liste mesajı mı?
+        const gonderilecekMesaj = temizMesaj.startsWith('[[DIREKT_GONDER]]')
+            ? temizMesaj.replace('[[DIREKT_GONDER]]', '')
+            : temizMesaj;
+
         await axios.post('https://api.fonnte.com/send', {
             target: sender,
-            message: temizMesaj,
+            message: gonderilecekMesaj,
             countryCode: '0'
         }, { headers: { 'Authorization': FONNTE_TOKEN } });
-
         console.log(`🚀 GÖNDERİLDİ -> ${sender}`);
 
         // ─── Model listesi çıkarıldıysa session'a kaydet ───
@@ -781,7 +785,7 @@ EŞLEŞTIRME KURALI:
         }
 
         // ─── AŞAMA 1: Bot fiyat verdiyse sipariş teklifi gönder ───
-        if (fiyatVarMi(aiResponse)) {
+        if (fiyatVarMi(aiResponse) && !aiResponse.includes('[[DIREKT_GONDER]]')) {
             const bilgi = fiyatBilgisiCikar(aiResponse);
             siparisSession.set(sender, {
                 state:       'awaiting_order',
