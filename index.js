@@ -274,7 +274,7 @@ function teknikBilgiAra(teknikData, mesaj) {
     const tamTablo = eslesen.length === 0;
     const kaynak   = tamTablo ? teknikData : eslesen;
     // Eşleşme varsa tümünü gönder; eşleşme yoksa (tüm tablo) max 300 satır
-    const sinirli  = tamTablo ? kaynak.slice(0, 300) : kaynak;
+    const sinirli  = tamTablo ? kaynak.slice(0, 80) : kaynak.slice(0, 150);
     const metin    = sinirli.map(r => `• ${r[konuKol] || ''}: ${r[aciklamaKol] || ''}`).join('\n');
 
     console.log(`🔍 Teknik bilgi: anahtar=[${[...anahtarlar].join(', ')}] → ${eslesen.length} eşleşme${tamTablo ? ' (YOK → tüm tablo)' : ''} | gönderilen: ${sinirli.length}/${kaynak.length}`);
@@ -955,7 +955,7 @@ ${(() => {
 
 ━━━ ${cariAdi} - SİPARİŞ GEÇMİŞİ ━━━
 Sütunlar: ID | Kayıt Tarihi | Cari Adı | Üretim Modeli | İşlem Tipi | Sipariş Adeti | Jant Teslim Alma Tarihi | Jant Teslim Alma | Jant Kontrol | Teslim Etme Tarihi | Teslim Edilen | Kalan | Üretim Sayısı | Tekerlek Tanımı | Anlaşılan Fiyat | Açıklama
-${JSON.stringify(mv.siparisler)}
+${JSON.stringify((mv.siparisler||[]).slice(-20))}
 
 ━━━ ${cariAdi} - AÇIK / BEKLEYEN SİPARİŞLER ━━━
 Sütunlar: ID | Tekerlek Tanımı | Cari Adı | Kayıt Tarihi | Jant Teslim Alma Tarihi | Üretim Sayısı | Geçen Gün Sayısı | Şehir
@@ -966,7 +966,7 @@ Sütunlar: Cari Adı | ID | Tekerlek Tanımı | Kayıt Tarihi | Jant Kontrol | A
 ${JSON.stringify(mv.eksikJant)}
 
 ━━━ ${cariAdi} - FATURA / ÖDEME İŞLEMLERİ ━━━
-${JSON.stringify(mv.islemler)}
+${JSON.stringify((mv.islemler||[]).slice(-30))}
 
 ━━━ ${cariAdi} - BORÇ BAKİYE DURUMU ━━━
 Sütunlar: Frma | SUM/Tutar (toplam satış) | SUM/Tahsilat (toplam ödeme) | Toplam Bakiye (net borç) | Vadeli Ciro | Vadesi Geçmiş Bakiye | Kalan Vade Gün
@@ -1040,8 +1040,22 @@ EŞLEŞTIRME KURALI:
 
         console.log('🧠 RobERD düşünüyor...');
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        const result = await model.generateContent(prompt);
-        const aiResponse = result.response.text();
+
+        // Retry mekanizması — 429 hatasında bekle ve tekrar dene
+        let result, aiResponse;
+        for (let deneme = 1; deneme <= 3; deneme++) {
+            try {
+                result = await model.generateContent(prompt);
+                aiResponse = result.response.text();
+                break;
+            } catch (e) {
+                if (e.message && e.message.includes('429') && deneme < 3) {
+                    const bekle = deneme * 15000; // 15s, 30s
+                    console.log(`⏳ Rate limit, ${bekle/1000}sn bekleniyor (deneme ${deneme}/3)...`);
+                    await new Promise(r => setTimeout(r, bekle));
+                } else throw e;
+            }
+        }
         console.log('✅ RobERD yanıtladı:', aiResponse);
 
         // Tag'i müşteriye göstermeden önce temizle
