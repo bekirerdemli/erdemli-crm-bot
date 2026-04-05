@@ -79,6 +79,7 @@ app.get('/modeller', async (req, res) => {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
+const GRUP_ID = process.env.WHATSAPP_GRUP_ID || ''; // Render'da WHATSAPP_GRUP_ID olarak ekleyin
 const SID = '1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M';
 // WhatsApp siparişlerinin yazılacağı Sheets ID (Erdemli Siparişler dosyası)
 // Eğer aynı dosyaysa SID ile aynı bırakın, farklıysa URL'den alıp buraya yazın
@@ -344,6 +345,27 @@ async function siparisiSheetsYaz(siparis) {
             },
         });
         console.log(`Siparis Sheets'e yazildi: ${siparis.cariAdi}`);
+
+        // WhatsApp grubuna bildirim gönder
+        if (GRUP_ID) {
+            const bildirim = `🤖 *RobERD'ten Mesaj Var!*
+
+📅 Tarih: ${tarih}
+👤 Müşteri: ${siparis.cariAdi}
+📞 Telefon: ${siparis.telefon}
+📦 Ürün: ${siparis.urunAdi}
+💰 Fiyat: ${siparis.fiyat}
+🔢 Adet: ${siparis.adet || 1}
+📌 Kaynak: WhatsApp Bot`;
+
+            await axios.post('https://api.fonnte.com/send', {
+                target: GRUP_ID,
+                message: bildirim,
+                countryCode: '0'
+            }, { headers: { 'Authorization': FONNTE_TOKEN } });
+            console.log(`📢 Grup bildirimi gönderildi -> ${GRUP_ID}`);
+        }
+
         return true;
     } catch (err) {
         console.error('Sheets yazma hatasi:', err.message);
