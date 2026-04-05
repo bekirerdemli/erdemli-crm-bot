@@ -644,9 +644,11 @@ ${(() => {
             const kolonAdlari = Object.keys(eslesen[0]);
             const tekerkolKol = kolonAdlari.find(k => /tekerlek.tan/i.test(k)) || kolonAdlari.find(k => /stok|urun|ürün/i.test(k)) || kolonAdlari[3];
 
+            const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
             const liste = eslesen.map((r, i) => {
                 const vals = Object.values(r);
-                return `${i+1}. ${vals.join(' | ')}`;
+                const emoji = emojiRakam[i] || `${i+1}.`;
+                return `${emoji} ${vals.join(' | ')}`;
             }).join('\n');
 
             // Session'a tam satır verilerini kaydet (Tekerlek Tanımı dahil)
