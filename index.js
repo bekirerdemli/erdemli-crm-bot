@@ -464,7 +464,7 @@ app.post('/webhook', async (req, res) => {
                     state: null,
                     secilenModel: detay.model,
                     secilenStokAdi: detay.stokAdi,
-                    erdemliYetkili: erdemliYetkiliMi(cariAdi),
+                    erdemliYetkili: erdemliYetkiliMi(session.cariAdi || ''),
                 });
                 sessionKaydet(siparisSession);
                 console.log(`✅ Model seçildi: ${detay.model} | Stok: ${detay.stokAdi}`);
