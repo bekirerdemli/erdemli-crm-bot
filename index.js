@@ -91,7 +91,7 @@ const URLS = {
     siparisler:     `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=748556980`,
     acikSiparisler: `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1995109523`,
     eksikJant:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1586553902`,
-    makinalar:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1621316106&range=A:G`,
+    makinalar:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1621316106`,
     polyfill:       `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=174636469`,
     teknikBilgi:    `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1461616374`,
     islemler:       `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=1884664027`,
@@ -101,12 +101,12 @@ const URLS = {
 function parseCSV(text, sep) {
     const lines = text.split('\n');
     if (!lines.length) return [];
-    // Ayraç otomatik tespit: virgül yoksa | dene
     if (!sep) {
         const ilk = lines[0] || '';
         sep = ilk.includes(',') ? ',' : ilk.includes('|') ? '|' : ',';
     }
     const headers = splitRow(lines[0], sep).map(h => h.trim().replace(/\r/g, ''));
+    console.log('📊 CSV başlıkları (' + headers.length + '):', headers.join(' | '));
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
