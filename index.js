@@ -573,6 +573,68 @@ Lütfen *1* veya *2* yazın.`;
         const data = await fetchAllData();
         const senderClean = cleanPhone(sender);
 
+        // ═══ MAKİNA LİSTESİ KONTROLÜ — Prompt'a gitmeden önce yap ═══
+        const msgU2 = message.toUpperCase()
+            .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+            .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+        const markalarList = ['DINGLI','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS'];
+        const markaBul = markalarList.find(m => msgU2.includes(m));
+        const yukseklikBul = msgU2.match(/(\d{1,2})\s*(M\b|METRE|METER)/);
+
+        if ((markaBul || yukseklikBul) && data.makinalar && data.makinalar.length > 0) {
+            const eslesenMak = (data.makinalar || []).filter(r => {
+                const s = Object.values(r).join(' ').toUpperCase()
+                    .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                    .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                const mOk = markaBul ? s.includes(markaBul) : true;
+                const yOk = yukseklikBul ? s.includes(yukseklikBul[1]+'M') : true;
+                return mOk && yOk;
+            });
+
+            if (eslesenMak.length > 0) {
+                const kolonlar = Object.keys(eslesenMak[0]);
+                console.log('🔍 Makina kolonları:', kolonlar.join(' | '));
+                console.log('🔍 Örnek satır:', Object.values(eslesenMak[0]).join(' | '));
+
+                // Kolon index'leri: Marka|Model|Makina Tipi|Lastik Ölçüsü Inch|Lastik Ölçüsü Metrik|JantTipi|STOK ADI
+                const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                const listeStr = eslesenMak.map((r, i) => {
+                    const vals = Object.values(r);
+                    // Marka(0) | Model(1) | MakinaTipi(2) | LastikInch(3) | LastikMetrik(4) | JantTipi(5) | StokAdi(6)
+                    // Her kolon değerini logla
+                    console.log(`🔍 Satır ${i}: ` + Object.keys(r).map((k,idx) => `[${idx}]${k}=${Object.values(r)[idx]}`).join(' | '));
+                    const parca = [vals[1],vals[2],vals[3],vals[4],vals[5]].filter(v => v && v.toString().trim());
+                    return (emojiRakam[i] || (i+1)+'.') + ' ' + parca.join(' | ');
+                }).join('\n');
+
+                const baslik = `${markaBul || 'İlgili'} ${yukseklikBul ? yukseklikBul[1]+' metre ' : ''}platform için lastik modellerimiz:\n`;
+                const tamMesaj = baslik + '\n' + listeStr + '\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.';
+
+                // Session'a kaydet
+                const mevcutSes = siparisSession.get(sender) || {};
+                siparisSession.set(sender, {
+                    ...mevcutSes,
+                    modelListesi: eslesenMak.map(r => Object.values(r)[1]),
+                    modelDetay: eslesenMak.map(r => ({
+                        model:   Object.values(r)[1] || '',
+                        stokAdi: Object.values(r)[6] || Object.values(r)[Object.values(r).length-1] || '',
+                        tip:     Object.values(r)[5] || '',
+                    }))
+                });
+                sessionKaydet(siparisSession);
+
+                // Direkt Fonnte'ye gönder — Gemini'ye uğrama
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: tamMesaj,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`📋 Makina listesi direkt gönderildi -> ${sender} (${eslesenMak.length} model)`);
+                return; // Gemini'ye gitme
+            }
+        }
+        // ═══════════════════════════════════════════════════════
+
         const musteri = (data.cariler || []).find(c => {
             const telefonlar = (c['TELEFON'] || '').split(',').map(t => cleanPhone(t.trim())).filter(Boolean);
             return telefonlar.includes(senderClean);
