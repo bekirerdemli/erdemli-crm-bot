@@ -859,6 +859,18 @@ Lütfen *1* veya *2* yazın.`;
         
         // Konu tespiti — sadece ilgili veriyi gönder
         const konu = mesajKonusuTespit(message);
+        
+        // Model seçimi yapıldıysa fiyat listesi her zaman gönderilmeli
+        const sessionKonusu = siparisSession.get(sender);
+        if (sessionKonusu && (sessionKonusu.state === 'awaiting_model' || sessionKonusu.secilenStokAdi)) {
+            konu.fiyat = true;
+        }
+        // Sipariş akışındaysa sipariş verisi gönderilmeli
+        if (sessionKonusu && ['awaiting_order','awaiting_option','awaiting_adet','awaiting_confirm'].includes(sessionKonusu.state)) {
+            konu.siparis = true;
+            konu.fiyat = true;
+        }
+        
         console.log('🎯 Konu:', JSON.stringify(konu));
 
         const polyfillSonuc = konu.polyfill ? polyfillAra(data.polyfill, message) : [];
