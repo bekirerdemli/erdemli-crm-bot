@@ -328,6 +328,20 @@ function erdemliYetkiliMi(cariAdi) {
     return cu.includes('ERDEMLİ KAUÇUK') || cu.includes('ERDEMLİ KAUCUK') || cu.includes('ERDEMLI KAUCUK') || cu.includes('ERDEMLI KAU');
 }
 
+function mesajKonusuTespit(msg) {
+    const m = msg.toUpperCase()
+        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+    return {
+        fiyat:    /FIYAT|UCRET|DOLAR|USD|KAPLAMA|SIFIR JANT|NE KADAR|KACO/.test(m),
+        siparis:  /SIPARIS|ORDER|TESLIM|KALAN|URETIM|ADET/.test(m),
+        bakiye:   /BAKIYE|BORC|ODEME|FATURA|TAHSILAT|ISLEM/.test(m),
+        teknik:   /HATA|ARIZA|ERROR|FAULT|BAKIM|HIDROLIK|AKU|SARJ|SENSOR|VOLTAJ|TEKNIK|KUMANDA/.test(m),
+        polyfill: /POLYFILL|DOLUM|DOLDUR/.test(m),
+        makina:   /MAKINA|PLATFORM|METRE|LASTIK VAR MI|HANGI LASTIK/.test(m),
+    };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // GOOGLE SHEETS — SERVİS HESABI İLE YAZ
 // .env içinde GOOGLE_SERVICE_ACCOUNT_JSON='{...json...}' olmalı
@@ -842,37 +856,36 @@ Lütfen *1* veya *2* yazın.`;
 
         const mv = musteriFiltrele(data, cariAdi);
         const ilkMesaj = ilkMesajMi(sender);
-        const polyfillSonuc = polyfillAra(data.polyfill, message);
+        
+        // Konu tespiti — sadece ilgili veriyi gönder
+        const konu = mesajKonusuTespit(message);
+        console.log('🎯 Konu:', JSON.stringify(konu));
 
-        // Teknik bilgi: akıllı arama ile sadece ilgili satırları gönder
-        const teknikSonuc = teknikBilgiAra(data.teknikBilgi, message);
-        const teknikOzet = teknikBilgiOzet(data.teknikBilgi);
+        const polyfillSonuc = konu.polyfill ? polyfillAra(data.polyfill, message) : [];
+        
+        // Teknik bilgi: sadece teknik soru varsa gönder
+        const teknikSonuc = konu.teknik 
+            ? teknikBilgiAra(data.teknikBilgi, message)
+            : { filtrelenmis: '', toplamSatir: 0, tamTablo: false };
+        const teknikOzet = konu.teknik ? teknikBilgiOzet(data.teknikBilgi) : '';
 
         const prompt = `Sen "Erdemli Kauçuk - Ömer Erdemli" firmasının resmi WhatsApp yapay zeka asistanısın. Adın RobERD'dir.
 Sana mesaj yazan: +${sender} | Sistemdeki Cari Adı: ${cariAdi} | Bu konuşmada ilk mesaj mı: ${ilkMesaj ? 'EVET' : 'HAYIR (tanıtım ve uyarıları tekrar etme)'}
 
 GİZLİLİK KURALI: Aşağıdaki müşteriye özel veriler YALNIZCA ${cariAdi} firmasına aittir. Başka hiçbir firmanın bilgisini paylaşma.
 
-━━━ TEKNİK BİLGİ TABANI (Herkese verilebilir genel bilgi) ━━━
+${konu.teknik ? `━━━ TEKNİK BİLGİ TABANI ━━━
 ${teknikOzet}
-${teknikSonuc.filtrelenmis ? `\nMesajla ilgili bulunan teknik bilgiler (${teknikSonuc.toplamSatir} kayıt${teknikSonuc.tamTablo ? ' — eşleşme bulunamadı, tüm tablo gönderildi' : ''}):\n${teknikSonuc.filtrelenmis}` : '\n(Teknik bilgi tabanı boş veya yüklenemedi)'}
+${teknikSonuc.filtrelenmis ? `\nTeknik bilgiler:\n${teknikSonuc.filtrelenmis}` : '(Teknik bilgi yok)'}
+Kullanım: KONU: AÇIKLAMA formatında. Teknik bilgi varsa doğrudan kullan, yetkiliye aktarma.` : '(Teknik soru değil — teknik tablo gönderilmedi)'}
 
-TEKNİK BİLGİ KULLANIM TALİMATI:
-- Yukarıdaki teknik bilgiler "KONU: AÇIKLAMA" formatındadır.
-- Marka ve model adı KONU alanının başında yazar (örn: "Dingli JCPT1412DC Çalışma Yüksekliği: 13.80 m").
-- Hata kodları "Hata Kodu XX - Açıklama: ... Makine Davranışı: ... Çözüm: ..." formatındadır.
-- Müşteri bir marka/model veya hata kodu sorduğunda, yukarıdaki bilgileri DOĞRUDAN kullanarak yanıt ver.
-- Teknik bilgi varsa kesinlikle "bilmiyorum" veya "yetkiliye aktarıyorum" DEME, veriyi kullan.
-- Birden fazla model karşılaştırması istenirse, her modelin bilgisini yan yana sun.
-
-━━━ ÜRÜN FİYAT LİSTESİ ━━━
+${konu.fiyat || konu.makina ? `━━━ ÜRÜN FİYAT LİSTESİ ━━━
 Sütunlar: Tekerlek Tanımı | kaplama (USD) | sıfır jant (USD)
-Fiyat sorusunda: kaplama = müşteri kendi jantını getirdiğinde, sıfır jant = yeni jantla birlikte teslim edildiğinde.
-Her zaman USD birimi ile belirt.
-${JSON.stringify(data.urunler || [])}
+kaplama=müşteri kendi jantını getirir, sıfır jant=jant dahil. USD birimi kullan.
+${JSON.stringify(data.urunler || [])}` : '(Fiyat sorusu değil — fiyat listesi gönderilmedi)'}
 
-━━━ POLYFİLL ARAMA SONUCU (Mesajdaki ölçü için) ━━━
-${JSON.stringify(polyfillSonuc)}
+${konu.polyfill ? `━━━ POLYFİLL ARAMA SONUCU ━━━
+${JSON.stringify(polyfillSonuc)}` : ''}
 
 ━━━ MAKİNA - TEKERLEK REHBERİ ━━━
 ${(() => {
@@ -953,24 +966,20 @@ ${(() => {
     return (data.makinalar || []).map(r => Object.values(r).join(' | ')).join('\n');
 })()}
 
-━━━ ${cariAdi} - SİPARİŞ GEÇMİŞİ ━━━
-Sütunlar: ID | Kayıt Tarihi | Cari Adı | Üretim Modeli | İşlem Tipi | Sipariş Adeti | Jant Teslim Alma Tarihi | Jant Teslim Alma | Jant Kontrol | Teslim Etme Tarihi | Teslim Edilen | Kalan | Üretim Sayısı | Tekerlek Tanımı | Anlaşılan Fiyat | Açıklama
+${konu.siparis ? `━━━ ${cariAdi} - SİPARİŞ GEÇMİŞİ (son 20) ━━━
 ${JSON.stringify((mv.siparisler||[]).slice(-20))}
 
 ━━━ ${cariAdi} - AÇIK / BEKLEYEN SİPARİŞLER ━━━
-Sütunlar: ID | Tekerlek Tanımı | Cari Adı | Kayıt Tarihi | Jant Teslim Alma Tarihi | Üretim Sayısı | Geçen Gün Sayısı | Şehir
 ${JSON.stringify(mv.acikSiparisler)}
 
 ━━━ ${cariAdi} - EKSİK JANT DURUMU ━━━
-Sütunlar: Cari Adı | ID | Tekerlek Tanımı | Kayıt Tarihi | Jant Kontrol | Alınacak Jant | Geçen Gün Sayısı | Şehir
-${JSON.stringify(mv.eksikJant)}
+${JSON.stringify(mv.eksikJant)}` : '(Sipariş sorusu değil — sipariş verileri gönderilmedi)'}
 
-━━━ ${cariAdi} - FATURA / ÖDEME İŞLEMLERİ ━━━
+${konu.bakiye ? `━━━ ${cariAdi} - FATURA / ÖDEME İŞLEMLERİ (son 30) ━━━
 ${JSON.stringify((mv.islemler||[]).slice(-30))}
 
 ━━━ ${cariAdi} - BORÇ BAKİYE DURUMU ━━━
-Sütunlar: Frma | SUM/Tutar (toplam satış) | SUM/Tahsilat (toplam ödeme) | Toplam Bakiye (net borç) | Vadeli Ciro | Vadesi Geçmiş Bakiye | Kalan Vade Gün
-${JSON.stringify(mv.bakiye)}
+${JSON.stringify(mv.bakiye)}` : '(Bakiye sorusu değil — finansal veriler gönderilmedi)'}
 
 ━━━ SEÇİLEN MODEL (Müşteri az önce listeden seçim yaptıysa) ━━━
 ${(() => {
