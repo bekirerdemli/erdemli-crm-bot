@@ -105,7 +105,7 @@ function parseCSV(text, sep) {
         const ilk = lines[0] || '';
         sep = ilk.includes(',') ? ',' : ilk.includes('|') ? '|' : ',';
     }
-    const headers = splitRow(lines[0], sep).map(h => h.trim().replace(/\r/g, ''));
+    const headers = splitRow(lines[0], sep).map(h => h.trim().replace(/\r/g, '').replace(/\n/g, ' '));
     console.log('📊 CSV başlıkları (' + headers.length + '):', headers.join(' | '));
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
@@ -135,7 +135,10 @@ function splitRow(line, sep = ',') {
 async function fetchAllData() {
     const results = await Promise.allSettled(
         Object.entries(URLS).map(([key, url]) =>
-            axios.get(url).then(r => ({ key, data: parseCSV(r.data) }))
+            axios.get(url).then(r => ({
+                key,
+                data: parseCSV(key === 'makinalar' ? r.data.replace(/\r\n|\r/g, '\n').replace(/"([^"]*)"/g, (m, p1) => '"' + p1.replace(/\n/g, ' ') + '"') : r.data)
+            }))
         )
     );
     const data = {};
