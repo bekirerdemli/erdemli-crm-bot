@@ -91,7 +91,8 @@ const URLS = {
     siparisler:     `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=748556980`,
     acikSiparisler: `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1995109523`,
     eksikJant:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1586553902`,
-    makinalar:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1621316106`,
+    makinalar:      `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=619309813`,
+    makinalarEski:  `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1621316106`,
     polyfill:       `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=174636469`,
     teknikBilgi:    `https://docs.google.com/spreadsheets/d/${SID}/export?format=csv&gid=1461616374`,
     islemler:       `https://docs.google.com/spreadsheets/d/${IID}/export?format=csv&gid=1884664027`,
@@ -137,7 +138,7 @@ async function fetchAllData() {
         Object.entries(URLS).map(([key, url]) =>
             axios.get(url).then(r => ({
                 key,
-                data: parseCSV(key === 'makinalar' ? r.data.replace(/\r\n|\r/g, '\n').replace(/"([^"]*)"/g, (m, p1) => '"' + p1.replace(/\n/g, ' ') + '"') : r.data)
+                data: parseCSV((key === 'makinalar' || key === 'makinalarEski') ? r.data.replace(/\r\n|\r/g, '\n').replace(/"([^"]*)"/g, (m, p1) => '"' + p1.replace(/\n/g, ' ') + '"') : r.data)
             }))
         )
     );
@@ -585,7 +586,7 @@ Lütfen *1* veya *2* yazın.`;
         const yukseklikBul = msgU2.match(/(\d{1,2})\s*(M\b|METRE|METER)/);
 
         if ((markaBul || yukseklikBul) && data.makinalar && data.makinalar.length > 0) {
-            const eslesenMak = (data.makinalar || []).filter(r => {
+            const filtrele = (liste) => liste.filter(r => {
                 const s = Object.values(r).join(' ').toUpperCase()
                     .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
                     .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
@@ -593,6 +594,61 @@ Lütfen *1* veya *2* yazın.`;
                 const yOk = yukseklikBul ? s.includes(yukseklikBul[1]+'M') : true;
                 return mOk && yOk;
             });
+
+            // Önce yeni makina rehberini (619309813) ara
+            let eslesenMak = filtrele(data.makinalar || []);
+
+            // Bulunamazsa fiyat listesinden (1263788777) markayla eşleşen ürünleri getir
+            if (eslesenMak.length === 0) {
+                console.log(`⚠️ Makina rehberinde bulunamadı, fiyat listesinde aranıyor...`);
+                const fiyatEslesen = (data.urunler || []).filter(r => {
+                    const s = Object.values(r).join(' ').toUpperCase()
+                        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    return markaBul ? s.includes(markaBul) : false;
+                });
+
+                if (fiyatEslesen.length > 0) {
+                    // Fiyat listesindeki ürünleri listele
+                    const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                    const fiyatListeStr = fiyatEslesen.map((r, i) => {
+                        const vals = Object.values(r).filter(v => v && v.toString().trim());
+                        return (emojiR[i] || (i+1)+'.') + ' ' + vals.join(' | ');
+                    }).join('\n');
+
+                    const fiyatMesaj = `${markaBul} için elimizdeki lastik seçenekleri:\n\n${fiyatListeStr}\n\nHangi lastiği kullanıyorsunuz? Numarasını yazmanız yeterli.`;
+
+                    // Session'a kaydet
+                    const mevcutSes2 = siparisSession.get(sender) || {};
+                    siparisSession.set(sender, {
+                        ...mevcutSes2,
+                        modelListesi: fiyatEslesen.map(r => Object.values(r)[0]),
+                        modelDetay: fiyatEslesen.map(r => ({
+                            model:   Object.values(r)[0] || '',
+                            stokAdi: Object.values(r)[0] || '',
+                            tip:     '',
+                        }))
+                    });
+                    sessionKaydet(siparisSession);
+
+                    await axios.post('https://api.fonnte.com/send', {
+                        target: sender,
+                        message: fiyatMesaj,
+                        countryCode: '0'
+                    }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                    console.log(`📋 Fiyat listesinden gönderildi -> ${sender} (${fiyatEslesen.length} ürün)`);
+                    return;
+                } else {
+                    // İkisinde de yok — yetkiliye yönlendir
+                    await axios.post('https://api.fonnte.com/send', {
+                        target: sender,
+                        message: `Üzgünüm, ${markaBul || 'aradığınız marka'} için sistemimizde uygun lastik bulunamadı. Yetkilimiz en kısa sürede sizinle iletişime geçecek. 📞`,
+                        countryCode: '0'
+                    }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                    console.log(`❌ Eşleşme bulunamadı, yetkiliye yönlendirildi -> ${sender}`);
+                    return;
+                }
+            }
 
             if (eslesenMak.length > 0) {
                 const kolonlar = Object.keys(eslesenMak[0]);
