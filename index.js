@@ -646,8 +646,9 @@ ${(() => {
 
             const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
             const liste = eslesen.map((r, i) => {
-                const vals = Object.values(r);
                 const emoji = emojiRakam[i] || `${i+1}.`;
+                // Tüm kolon değerlerini al (boş olmayanları)
+                const vals = Object.values(r).filter(v => v && v.toString().trim());
                 return `${emoji} ${vals.join(' | ')}`;
             }).join('\n');
 
@@ -663,7 +664,8 @@ ${(() => {
             });
             sessionKaydet(siparisSession);
 
-            return `Müşteri model seçimi yapacak. Aşağıdaki listeyi OLDUĞU GİBİ sun, HİÇBİR SATIRI ATLAMA (toplam ${eslesen.length} model):\n${liste}\n\nSon olarak "Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli." yaz.`;
+            return `Müşteri model seçimi yapacak. Aşağıdaki listeyi OLDUĞU GİBİ sun, HİÇBİR SATIRI ATLAMA (toplam ${eslesen.length} model).
+Her satırda Marka, Model, Platform Türü, Lastik Ölçüsü, Jant Ölçüsü ve Lastik Tipi bilgileri bulunmaktadır — hepsini göster:\n${liste}\n\nSon olarak "Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli." yaz.`;
         }
     }
     return (data.makinalar || []).map(r => Object.values(r).join(' | ')).join('\n');
