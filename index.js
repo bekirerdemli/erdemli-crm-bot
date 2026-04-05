@@ -39,7 +39,7 @@ function sessionKaydet(sessions) {
 const app = express();
 
 // ─── SİPARİŞ ONAY AKIŞI — her numara için bekleyen sipariş durumu ───
-// Olası state değerleri: 'awaiting_order' | 'awaiting_option' | 'awaiting_confirm'
+// Olası state değerleri: 'awaiting_order' | 'awaiting_option' | 'awaiting_adet' | 'awaiting_confirm'
 const siparisSession = new Map();
 // { state, cariAdi, telefon, urunAdi, fiyat, adet, timestamp }
 // Not: sessionYukle() aşağıda googleapis require'dan sonra çağrılır
@@ -474,16 +474,15 @@ app.post('/webhook', async (req, res) => {
 
 Lütfen *1* veya *2* yazın.`;
 
-                siparisSession.set(sender, { ...session, state: 'awaiting_confirm' }); sessionKaydet(siparisSession);
+                siparisSession.set(sender, { ...session, state: 'awaiting_adet' }); sessionKaydet(siparisSession);
 
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
-                    message: onayMesaji,
-                    button: JSON.stringify(['Onayla', 'İptal Et']),
+                    message: '📦 Kaç adet istiyorsunuz?\n\nSayıyı yazmanız yeterli.',
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
 
-                console.log(`📋 Onay formu gönderildi -> ${sender}`);
+                console.log(`📦 Adet sorusu gönderildi -> ${sender}`);
                 return;
 
             } else if (msgNorm === '2' || msgNorm.includes('HAYIR') || msgNorm.includes('VAZGEÇTİM')) {
@@ -532,22 +531,59 @@ Lütfen *1* veya *2* yazın.`;
 
                 siparisSession.set(sender, {
                     ...session,
-                    state: 'awaiting_confirm',
+                    state: 'awaiting_adet',
                     fiyat: `${secim.tip} - ${secim.fiyat}`,
                 }); sessionKaydet(siparisSession);
 
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
-                    message: onayMesaji,
-                    button: JSON.stringify(['Onayla', 'İptal Et']),
+                    message: '📦 Kaç adet istiyorsunuz?\n\nSayıyı yazmanız yeterli.',
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
-                console.log(`📋 Onay formu gönderildi (${secim.tip}) -> ${sender}`);
+                console.log(`📦 Adet sorusu gönderildi (${secim.tip}) -> ${sender}`);
                 return;
             } else {
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
                     message: '❓ Lütfen *1* (Kaplama) veya *2* (Sıfır Jantlı) yazın.',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                return;
+            }
+        }
+
+        // AŞAMA 2.7: Müşteri adet yazdı
+        if (session && session.state === 'awaiting_adet') {
+            const adet = parseInt(msgNorm);
+            if (!isNaN(adet) && adet > 0 && adet <= 999) {
+                // Adet geçerli — onay formunu göster
+                const onayMesaji =
+`📋 *SİPARİŞ ONAY FORMU*
+
+👤 Müşteri: ${session.cariAdi}
+📦 Ürün: ${session.urunAdi}
+💰 Fiyat: ${session.fiyat}
+🔢 Adet: ${adet}
+📅 Tarih: ${new Date().toLocaleDateString('tr-TR')}
+
+1️⃣ Onayla
+2️⃣ İptal Et
+
+Lütfen *1* veya *2* yazın.`;
+
+                siparisSession.set(sender, { ...session, state: 'awaiting_confirm', adet }); sessionKaydet(siparisSession);
+
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: onayMesaji,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`📋 Onay formu gönderildi (${adet} adet) -> ${sender}`);
+                return;
+            } else {
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: '❓ Lütfen geçerli bir adet yazın. (örn: 1, 2, 4)',
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
                 return;
@@ -563,7 +599,7 @@ Lütfen *1* veya *2* yazın.`;
                     telefon: sender,
                     urunAdi: session.urunAdi,
                     fiyat:   session.fiyat,
-                    adet:    1,
+                    adet:    session.adet || 1,
                 });
                 siparisSession.delete(sender); sessionKaydet(siparisSession);
 
