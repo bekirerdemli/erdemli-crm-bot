@@ -581,11 +581,32 @@ Lütfen *1* veya *2* yazın.`;
         const msgU2 = message.toUpperCase()
             .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
             .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-        const markalarList = ['DINGLI','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS'];
-        const markaBul = markalarList.find(m => msgU2.includes(m));
+
+        // Yükseklik tespiti
         const yukseklikBul = msgU2.match(/(\d{1,2})\s*(M\b|METRE|METER)/);
 
-        if ((markaBul || yukseklikBul) && data.makinalar && data.makinalar.length > 0) {
+        // Marka tespiti — önce sabit listede ara, sonra makina rehberinde, sonra fiyat listesinde
+        const markalarSabit = ['DINGLI','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS','LGMG','AIRO','MERLO','MAGNI','NIFTYLIFT','TOUCAN','MULTITEL'];
+        let markaBul = markalarSabit.find(m => msgU2.includes(m));
+
+        // Sabit listede yoksa — tüm makinalar ve fiyat listesindeki markaları tara
+        if (!markaBul) {
+            const tumMarkalar = new Set();
+            (data.makinalar || []).forEach(r => { const v = Object.values(r)[0]; if(v) tumMarkalar.add(v.toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C')); });
+            (data.urunler || []).forEach(r => {
+                const v = Object.values(r)[0];
+                if(v) {
+                    const kelimeler = v.toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C').split(/[\s\(]/);
+                    kelimeler.forEach(k => { if(k.length > 2) tumMarkalar.add(k); });
+                }
+            });
+            markaBul = [...tumMarkalar].find(m => m.length > 2 && msgU2.includes(m));
+        }
+
+        // Lastik/makine sorusu mu? Tetikleyici kelimeler
+        const lastikSorusu = /LAST[Iİ]K|TEKERK|MAKA[SŞ]|PLATFORM|METRE|MAKINA|MACH|TIRES?|WHEEL/i.test(message);
+
+        if ((markaBul || yukseklikBul) && lastikSorusu && data.makinalar && data.makinalar.length > 0) {
             const filtrele = (liste) => liste.filter(r => {
                 const s = Object.values(r).join(' ').toUpperCase()
                     .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
