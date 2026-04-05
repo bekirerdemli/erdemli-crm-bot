@@ -640,7 +640,27 @@ ${(() => {
             siparisSession.set(sender, { ...mevcut, modelListesi: eslesen.map(r => r[modelKol] || Object.values(r)[1]) });
             sessionKaydet(siparisSession);
 
-            const liste = eslesen.map((r, i) => `${i+1}. ${Object.values(r).join(' | ')}`).join('\n');
+            // Kolon adlarını bul
+            const kolonAdlari = Object.keys(eslesen[0]);
+            const tekerkolKol = kolonAdlari.find(k => /tekerlek.tan/i.test(k)) || kolonAdlari.find(k => /stok|urun|ürün/i.test(k)) || kolonAdlari[3];
+
+            const liste = eslesen.map((r, i) => {
+                const vals = Object.values(r);
+                return `${i+1}. ${vals.join(' | ')}`;
+            }).join('\n');
+
+            // Session'a tam satır verilerini kaydet (Tekerlek Tanımı dahil)
+            const mevcut2 = siparisSession.get(sender) || {};
+            siparisSession.set(sender, { 
+                ...mevcut2, 
+                modelListesi: eslesen.map(r => r[modelKol] || Object.values(r)[1]),
+                modelDetay: eslesen.map(r => ({
+                    model: r[modelKol] || Object.values(r)[1],
+                    tekerTanim: r[tekerkolKol] || Object.values(r)[3] || ''
+                }))
+            });
+            sessionKaydet(siparisSession);
+
             return `Müşteri model seçimi yapacak. Aşağıdaki listeyi OLDUĞU GİBİ sun, HİÇBİR SATIRI ATLAMA (toplam ${eslesen.length} model):\n${liste}\n\nSon olarak "Hangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli." yaz.`;
         }
     }
@@ -667,7 +687,17 @@ Sütunlar: Frma | SUM/Tutar (toplam satış) | SUM/Tahsilat (toplam ödeme) | To
 ${JSON.stringify(mv.bakiye)}
 
 ━━━ SON LİSTELENEN MODELLER (Müşteri numara yazdıysa bu listeye göre eşleştir) ━━━
-${siparisSession.get(sender)?.modelListesi ? siparisSession.get(sender).modelListesi.map((m,i) => `${i+1}. ${m}`).join('\n') : 'Henüz model listesi sunulmadı'}
+${(() => {
+    const ses = siparisSession.get(sender);
+    if (!ses) return 'Henüz model listesi sunulmadı';
+    if (ses.modelDetay && ses.modelDetay.length > 0) {
+        return ses.modelDetay.map((m, i) => `${i+1}. Model: ${m.model} | Tekerlek Tanımı: ${m.tekerTanim}`).join('\n');
+    }
+    if (ses.modelListesi && ses.modelListesi.length > 0) {
+        return ses.modelListesi.map((m, i) => `${i+1}. ${m}`).join('\n');
+    }
+    return 'Henüz model listesi sunulmadı';
+})()}
 
 ━━━ MÜŞTERİNİN MESAJI ━━━
 "${message}"
@@ -697,18 +727,18 @@ ADIM 1 — Müşterinin makine modeli net belli mi?
 
 ADIM 2 — Müşteri numara veya model adı yazdıysa → Model tespit edildi.
 - SON LİSTELENEN MODELLER bölümündeki listeye göre seçilen modeli bul.
-- Makina-Tekerlek Rehberinden o modelin lastik ölçüsünü ve lastik tipini bul.
-- Lastik tipine göre ÜRÜN FİYAT LİSTESİNDEN doğru satırı seç:
+- Makina-Tekerlek Rehberinden o modelin "Tekerlek Tanımı" kolonundaki değeri bul. (örn: "15x5 Tekerlek (Dingli HA)", "15x5 Tekerlek (Dingli DC)" vb.)
+- Bu "Tekerlek Tanımı" değerini ÜRÜN FİYAT LİSTESİNDEKİ "Tekerlek Tanımı" kolonuyla birebir eşleştir.
+- Eşleşen satırın kaplama ve sıfır jant fiyatlarını al.
 
-  🔴 KAMALI  → Fiyat listesinde "Dingli HA" adını içeren satırı bul, o fiyatı kullan. Ürün adı = "Dingli HA [ölçü]"
-  🔵 BİJONLU → Fiyat listesinde "Dingli DC" adını içeren satırı bul, o fiyatı kullan. Ürün adı = "Dingli DC [ölçü]"
-  🟡 KAMALI veya BİJONLU değilse → Lastik ölçüsüne göre fiyat listesinden en yakın eşleşmeyi bul.
+EŞLEŞTIRME KURALI:
+  → Makina rehberindeki "Tekerlek Tanımı" = Fiyat listesindeki "Tekerlek Tanımı" 
+  → Birebir aynı isimle eşleştir. Bulamazsan en yakın ölçü/isim eşleşmesini kullan.
 
 - Fiyatı bulduktan sonra yanıtın EN SONUNA tag ekle:
-  * Hem kaplama hem sıfır jant varsa: [URUN:ürün adı|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
-    Örnek (kamalı): [URUN:Dingli HA 15x5|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
-    Örnek (bijonlu): [URUN:Dingli DC 15x5|KAPLAMA:$55 USD|SIFIRJANT:$85 USD]
-  * Tek fiyat varsa: [URUN:ürün adı|FIYAT:fiyat]
+  * Hem kaplama hem sıfır jant varsa: [URUN:Tekerlek Tanımı değeri|KAPLAMA:kaplama fiyatı|SIFIRJANT:sıfır jant fiyatı]
+    Örnek: [URUN:15x5 Tekerlek (Dingli HA)|KAPLAMA:$65 USD|SIFIRJANT:$95 USD]
+  * Tek fiyat varsa: [URUN:Tekerlek Tanımı değeri|FIYAT:fiyat]
 
 - BİRDEN FAZLA ÜRÜN listelendiyse: KESİNLİKLE tag EKLEME.`;
 
