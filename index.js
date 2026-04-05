@@ -1039,7 +1039,7 @@ EŞLEŞTIRME KURALI:
 - BİRDEN FAZLA ÜRÜN listelendiyse: KESİNLİKLE tag EKLEME.`;
 
         console.log('🧠 RobERD düşünüyor...');
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
         const result = await model.generateContent(prompt);
         const aiResponse = result.response.text();
         console.log('✅ RobERD yanıtladı:', aiResponse);
