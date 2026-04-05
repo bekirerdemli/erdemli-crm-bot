@@ -418,6 +418,12 @@ app.post('/webhook', async (req, res) => {
     const message = req.body.message || req.body.text;
     if (!sender || !message) { console.log('Sender veya mesaj yok'); return; }
 
+        // Grup mesajlarını tamamen yoksay — bot sadece bireysel mesajlara cevap verir
+        if (req.body.isgroup || (sender && sender.includes('@g.us'))) {
+            console.log(`🚫 Grup mesajı yoksayıldı -> ${sender}`);
+            return;
+        }
+
     try {
         console.log(`\n💬 ${sender} | ${message}`);
 
