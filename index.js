@@ -609,14 +609,24 @@ app.post('/webhook', async (req, res) => {
                         message = 'bakiye borcum ne kadar';
                         break;
                     case 2: // Lastik fiyatı
-                        await whatsappGonder(sender, 'Makinenizin markasını öğrenebilir miyim? 🔧\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)');
-                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
-                        sessionKaydet(siparisSession);
+                        {
+                            const MARKALAR = ['DINGLI','ELS','GENIE','HAULOTTE','JLG','LGMG','MANTALL','SINOBOOM','SNORKEL','ZOOMLION'];
+                            const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                            const markaStr = MARKALAR.map((m,i) => `${emojiR[i]} ${m}`).join('\n');
+                            siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: MARKALAR });
+                            sessionKaydet(siparisSession);
+                            await whatsappGonder(sender, `Makinenizin markasını seçin: 🔧\n\n${markaStr}\n\nNumarasını yazmanız yeterli.`);
+                        }
                         return;
                     case 3: // Sipariş verme
-                        await whatsappGonder(sender, 'Sipariş vermek için önce makinenizin markasını öğrenelim 🔧\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)');
-                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
-                        sessionKaydet(siparisSession);
+                        {
+                            const MARKALAR = ['DINGLI','ELS','GENIE','HAULOTTE','JLG','LGMG','MANTALL','SINOBOOM','SNORKEL','ZOOMLION'];
+                            const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                            const markaStr = MARKALAR.map((m,i) => `${emojiR[i]} ${m}`).join('\n');
+                            siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: MARKALAR });
+                            sessionKaydet(siparisSession);
+                            await whatsappGonder(sender, `Sipariş için makinenizin markasını seçin: 🔧\n\n${markaStr}\n\nNumarasını yazmanız yeterli.`);
+                        }
                         return;
                     case 4: // Şikayet/Öneri
                         siparisSession.set(sender, { ...session, state: 'awaiting_sikayet' });
@@ -658,14 +668,24 @@ app.post('/webhook', async (req, res) => {
                         await whatsappGonder(sender, '📋 *Müşteri Kayıt Formu*\n\nFirmanızın tam ticari unvanını yazar mısınız?');
                         return;
                     case 2: // Fiyat
-                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
-                        sessionKaydet(siparisSession);
-                        await whatsappGonder(sender, '🔧 Makinenizin markasını öğrenebilir miyim?\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)\n\n📌 Cari kaydı yaptırırsanız %5 indirimden yararlanabilirsiniz.');
+                        {
+                            const MARKALAR = ['DINGLI','ELS','GENIE','HAULOTTE','JLG','LGMG','MANTALL','SINOBOOM','SNORKEL','ZOOMLION'];
+                            const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                            const markaStr = MARKALAR.map((m,i) => `${emojiR[i]} ${m}`).join('\n');
+                            siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: MARKALAR });
+                            sessionKaydet(siparisSession);
+                            await whatsappGonder(sender, `Makinenizin markasını seçin: 🔧\n\n${markaStr}\n\nNumarasını yazmanız yeterli.\n\n📌 Cari kaydı yaptırırsanız %5 indirimden yararlanabilirsiniz.`);
+                        }
                         return;
                     case 3: // Sipariş
-                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
-                        sessionKaydet(siparisSession);
-                        await whatsappGonder(sender, '🔧 Sipariş için önce makinenizin markasını öğrenelim.\n\nMarka adını yazmanız yeterli.\n\n📌 Cari kaydı yaptırırsanız %5 indirimden yararlanabilirsiniz.');
+                        {
+                            const MARKALAR = ['DINGLI','ELS','GENIE','HAULOTTE','JLG','LGMG','MANTALL','SINOBOOM','SNORKEL','ZOOMLION'];
+                            const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                            const markaStr = MARKALAR.map((m,i) => `${emojiR[i]} ${m}`).join('\n');
+                            siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: MARKALAR });
+                            sessionKaydet(siparisSession);
+                            await whatsappGonder(sender, `Sipariş için makinenizin markasını seçin: 🔧\n\n${markaStr}\n\nNumarasını yazmanız yeterli.\n\n📌 Cari kaydı yaptırırsanız %5 indirimden yararlanabilirsiniz.`);
+                        }
                         return;
                     default:
                         await whatsappGonder(sender, `❓ Lütfen 1-3 arasında bir numara yazın.\n\n${MENU_YENI}`);
@@ -1424,7 +1444,7 @@ Lütfen *1* veya *2* yazın.`;
 
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
-                    message: `Makinenizin markasını öğrenebilir miyim? 🔧\n\n${markaStr}\n\nNumarasını yazmanız yeterli. Ya da marka adını doğrudan yazabilirsiniz.`,
+                    message: `Makinenizin markasını seçin: 🔧\n\n${markaStr}\n\nNumarasını yazmanız yeterli.`,
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
                 console.log(`📋 Marka sorusu gönderildi -> ${sender}`);
