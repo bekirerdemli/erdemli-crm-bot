@@ -504,7 +504,7 @@ async function whatsappGonder(target, message) {
 app.post('/webhook', async (req, res) => {
     res.status(200).send({ status: true });
     const sender  = req.body.sender;
-    const message = req.body.message || req.body.text;
+    let message = req.body.message || req.body.text;
     if (!sender || !message) { console.log('Sender veya mesaj yok'); return; }
 
         // Grup mesajlarını tamamen yoksay — bot sadece bireysel mesajlara cevap verir
@@ -526,8 +526,19 @@ app.post('/webhook', async (req, res) => {
             return telefonlar.includes(senderCleanErken);
         });
         const cariAdiErken = musteriErken ? (musteriErken['ÜNVANI 1'] || musteriErken['Cari Adı'] || '') : '';
-        const yetkiliErken = musteriErken ? (musteriErken['YETKİLİ'] || musteriErken['Yetkili'] || '').split(',')[0].trim() : '';
         const kayitliMusteriErken = !!musteriErken && !!cariAdiErken;
+
+        // Yetkili tespiti: hangi sıradaki telefon yazdıysa o sıradaki yetkili
+        let yetkiliErken = '';
+        if (musteriErken) {
+            const telefonlar = (musteriErken['TELEFON'] || '').split(',').map(t => cleanPhone(t.trim())).filter(Boolean);
+            const yetkiliAdlari = (musteriErken['YETKİLİ'] || musteriErken['Yetkili'] || '').split(',').map(y => y.trim()).filter(Boolean);
+            const telIdx = telefonlar.indexOf(senderCleanErken);
+            // Aynı sıradaki yetkili varsa onu al, yoksa ilkini al
+            yetkiliErken = telIdx >= 0 && yetkiliAdlari[telIdx]
+                ? yetkiliAdlari[telIdx]
+                : (yetkiliAdlari[0] || '');
+        }
 
         const session = siparisSession.get(sender);
         const msgNorm = message.trim().toUpperCase()
@@ -575,13 +586,11 @@ app.post('/webhook', async (req, res) => {
             if (kayitli) {
                 // KAYITLI MÜŞTERİ MENÜSÜ
                 switch (secim) {
-                    case 1: // Borç/Bakiye — Gemini'ye bakiye sorusu olarak yönlendir
-                        siparisSession.set(sender, { ...session, state: 'awaiting_gemini', konu: 'bakiye' });
+                    case 1: // Borç/Bakiye
+                        siparisSession.set(sender, { ...session, state: null });
                         sessionKaydet(siparisSession);
-                        // Yapay mesaj oluşturup Gemini'ye gönder
                         await whatsappGonder(sender, '🔍 Bakiye bilginizi sorguluyorum...');
-                        // message'ı override et ki Gemini bakiye sorusu olarak anlasın
-                        Object.assign(req.body, { message: 'bakiye borcum ne kadar' });
+                        message = 'bakiye borcum ne kadar';
                         break;
                     case 2: // Lastik fiyatı
                         siparisSession.set(sender, { ...session, state: null });
@@ -607,13 +616,13 @@ app.post('/webhook', async (req, res) => {
                         siparisSession.set(sender, { ...session, state: null });
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '🔍 Teslim alınmayan jant bilgilerinizi sorguluyorum...');
-                        Object.assign(req.body, { message: 'teslim alınmayan eksik jantlarım hangileri' });
+                        message = 'teslim alınmayan eksik jantlarım hangileri';
                         break;
                     case 6: // Açık sipariş
                         siparisSession.set(sender, { ...session, state: null });
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '🔍 Açık siparişlerinizi sorguluyorum...');
-                        Object.assign(req.body, { message: 'açık siparişlerim hangileri kaç gündür bekliyor' });
+                        message = 'açık siparişlerim hangileri kaç gündür bekliyor';
                         break;
                     case 7: // Teknik bilgi
                         siparisSession.set(sender, { ...session, state: 'awaiting_teknik' });
