@@ -298,7 +298,17 @@ function teknikBilgiOzet(teknikData) {
         : `Teknik bilgi tabanı mevcut (${teknikData.length} kayıt)`;
 }
 
-function musteriFiltrele(data, cariAdi) {
+function formatMakinaSatiri(emoji, model, makinaTipi, lastikInch, lastikMetrik, jantTipi) {
+    // Model + Makina Tipi — ilk satır
+    const ustSatir = [model, makinaTipi].filter(v => v && v.toString().trim()).join(' | ');
+    // Lastik ölçüsü + Jant Tipi (kalın) — alt satır
+    const olcu = [lastikInch, lastikMetrik].filter(v => v && v.toString().trim()).join(' | ');
+    const jant = jantTipi ? `*${jantTipi.trim()}*` : '';
+    const altSatir = [olcu, jant].filter(Boolean).join(' | ');
+    return `${emoji} ${ustSatir}\n   ${altSatir}`;
+}
+
+
     if (cariAdi === 'Bilinmeyen Musteri') return {};
     const cu = cariAdi.toUpperCase();
 
@@ -767,9 +777,8 @@ app.post('/webhook', async (req, res) => {
                 const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
                 const listeStr = eslesenMak.map((r, i) => {
                     const vals = Object.values(r);
-                    const parca = [vals[1], vals[2], vals[3], vals[4], vals[5]].filter(v => v && v.toString().trim());
-                    return `${emojiRakam[i]||i+1+'.'} ${parca.join(' | ')}`;
-                }).join('\n');
+                    return formatMakinaSatiri(emojiRakam[i]||`${i+1}.`, vals[1], vals[2], vals[3], vals[4], vals[5]);
+                }).join('\n\n');
 
                 const tamMesaj = `*${marka} — ${yukseklik} metre* için lastik seçenekleri:\n\n${listeStr}\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.`;
 
@@ -1044,9 +1053,8 @@ Lütfen *1* veya *2* yazın.`;
                     const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
                     const listeStr = eslesenMak.map((r, i) => {
                         const vals = Object.values(r);
-                        const parca = [vals[1],vals[2],vals[3],vals[4],vals[5]].filter(v => v && v.toString().trim());
-                        return (emojiRakam[i] || (i+1)+'.') + ' ' + parca.join(' | ');
-                    }).join('\n');
+                        return formatMakinaSatiri(emojiRakam[i]||`${i+1}.`, vals[1], vals[2], vals[3], vals[4], vals[5]);
+                    }).join('\n\n');
 
                     const tamMesaj = `*${markaBul} — ${yukseklikBul[1]} metre* için lastik seçenekleri:\n\n${listeStr}\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.`;
 
@@ -1241,15 +1249,7 @@ ${(() => {
 
             const liste = eslesen.map((r, i) => {
                 const emoji = emojiRakam[i] || (i+1)+'.';
-                const parca = [
-                    r[markaKol],
-                    r[modelKol2],
-                    r[tipKol],
-                    r[olcuInch],
-                    r[jantTipi],
-                    r[stokKol]
-                ].filter(v => v && v.toString().trim());
-                return emoji + ' ' + parca.join(' | ');
+                return formatMakinaSatiri(emoji, r[modelKol2], r[tipKol], r[olcuInch], r[olcuMetrik], r[jantTipi]);
             }).join('\n');
 
             // Session'a STOK ADI ile kaydet
