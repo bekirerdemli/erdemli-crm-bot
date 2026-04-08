@@ -808,20 +808,16 @@ app.post('/webhook', async (req, res) => {
                     return `$${str} USD`;
                 };
 
-                // %5 RobERD iskontosu uygula
-                // Kampanya: 08.04.2026 öncesi siparişler %5 indirimli; sonrası zaten iskontolu sayılır
+                // %5 RobERD iskontosu — her zaman aktif
                 const ISKONTO_ORAN = 0.05;
-                const kampanyaAktif = Date.now() <= KAMPANYA_BITIS;
                 const iskontoluFiyat = (fiyatStr) => {
-                    if (!fiyatStr || !kampanyaAktif) return null;
+                    if (!fiyatStr) return null;
                     const sayi = parseFloat(fiyatStr.replace(/[^0-9.,]/g, '').replace(',', '.'));
-                    if (isNaN(sayi)) return null;
+                    if (isNaN(sayi) || sayi === 0) return null;
                     const indirimli = (sayi * (1 - ISKONTO_ORAN)).toFixed(2);
                     return `$${indirimli} USD`;
                 };
-                const iskontoBilgisi = kampanyaAktif
-                    ? `\n\n🎁 *RobERD'den özel fiyat:* WhatsApp üzerinden sipariş verdiğiniz için *%5 indirim* uygulanmaktadır.`
-                    : '';
+                const iskontoBilgisi = `\n\n🎁 *RobERD'den özel fiyat:* WhatsApp üzerinden sipariş verdiğiniz için *%5 indirim* uygulanmaktadır.`;
 
                 let kaplamaFiyat = null, sifirJant = null, tekerTanim = stokAdi;
                 if (fiyatSatiri) {
@@ -867,7 +863,7 @@ app.post('/webhook', async (req, res) => {
 
                 if (eskiFiyat) {
                     // ✅ Daha önce bu üründen almış → önceki anlaşılan fiyat + %5
-                    const eskiIndirimli = kampanyaAktif ? iskontoluFiyat(eskiFiyat) : null;
+                    const eskiIndirimli = iskontoluFiyat(eskiFiyat);
                     fiyatMesaj = eskiIndirimli
                         ? `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 Liste fiyatı: ~~${eskiFiyat}~~\n🎁 *RobERD indirimi (%5):* *${eskiIndirimli}*\n\n_WhatsApp üzerinden sipariş verdiğiniz için %5 indirim uygulanmaktadır._`
                         : `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 *${eskiFiyat}*`;
