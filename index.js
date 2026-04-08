@@ -338,7 +338,7 @@ function mesajKonusuTespit(msg) {
         bakiye:   /BAKIYE|BORC|ODEME|FATURA|TAHSILAT|ISLEM/.test(m),
         teknik:   /HATA|ARIZA|ERROR|FAULT|BAKIM|HIDROLIK|AKU|SARJ|SENSOR|VOLTAJ|TEKNIK|KUMANDA/.test(m),
         polyfill: /POLYFILL|DOLUM|DOLDUR/.test(m),
-        makina:   /MAKINA|PLATFORM|METRE|LASTIK VAR MI|HANGI LASTIK/.test(m),
+        makina:   /MAKINA|PLATFORM|METRE|LAST[IUG]|TEKERLEK|HANGI LAST/.test(m),
     };
 }
 
@@ -872,10 +872,13 @@ Lütfen *1* veya *2* yazın.`;
             markaBul = [...tumMarkalar].find(m => m.length > 2 && msgU2.includes(m));
         }
 
-        // Lastik/makine sorusu mu? Tetikleyici kelimeler
-        const lastikSorusu = /LAST[Iİ]K|TEKERK|MAKA[SŞ]|PLATFORM|METRE|MAKINA|MACH|TIRES?|WHEEL/i.test(message);
+        // Lastik/makine sorusu mu? Tetikleyici kelimeler — msgU2 üzerinde çalıştır (normalleştirilmiş)
+        const lastikSorusu = /LAST[IUG]|TEKERK|MAKA[SC]|PLATFORM|METRE|MAKINA|MACH|TIRES?|WHEEL/i.test(msgU2);
 
-        if (lastikSorusu && data.makinalar && data.makinalar.length > 0) {
+        // Marka tek başına yazılsa bile (örn: "Dingli lastiği") lastik sorusu sayılır
+        const lastikAkisiBaslat = lastikSorusu || (markaBul && /LAST|TEKERLEK|KAPLAMA|SIFIR|JANT/i.test(msgU2));
+
+        if (lastikAkisiBaslat && data.makinalar && data.makinalar.length > 0) {
 
             // ── Hem marka hem yükseklik varsa direkt filtrele (eski davranış) ──
             if (markaBul && yukseklikBul) {
