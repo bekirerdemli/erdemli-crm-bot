@@ -471,18 +471,153 @@ app.post('/webhook', async (req, res) => {
             const detay = session.modelDetay && session.modelDetay[secimNo];
 
             if (!isNaN(secimNo) && secimNo >= 0 && detay) {
-                // Seçilen modeli session'dan sil, Gemini'ye sor
-                const mevcutSes = siparisSession.get(sender) || {};
-                siparisSession.set(sender, {
-                    ...mevcutSes,
-                    state: null,
-                    secilenModel: detay.model,
-                    secilenStokAdi: detay.stokAdi,
-                    erdemliYetkili: erdemliYetkiliMi(session.cariAdi || ''),
+                const stokAdi = detay.stokAdi;
+                console.log(`✅ Model seçildi: ${detay.model} | Stok: ${stokAdi}`);
+
+                const data2 = await fetchAllData();
+
+                // ── Müşteri tespiti
+                const senderClean2 = cleanPhone(sender);
+                const musteri2 = (data2.cariler || []).find(c => {
+                    const telefonlar = (c['TELEFON'] || '').split(',').map(t => cleanPhone(t.trim())).filter(Boolean);
+                    return telefonlar.includes(senderClean2);
                 });
-                sessionKaydet(siparisSession);
-                console.log(`✅ Model seçildi: ${detay.model} | Stok: ${detay.stokAdi}`);
-                // Gemini'ye git — fiyat sorusu olarak devam et
+                const cariAdi2 = musteri2 ? (musteri2['ÜNVANI 1'] || musteri2['Cari Adı'] || '') : '';
+                const kayitliMusteri = !!musteri2 && !!cariAdi2;
+
+                // ── Liste fiyatını bul
+                const fiyatSatiri = (data2.urunler || []).find(r => {
+                    const tanim = (Object.values(r)[0] || '').trim();
+                    return tanim === stokAdi || tanim.toLowerCase() === stokAdi.toLowerCase();
+                });
+
+                const formatFiyat = (val) => {
+                    if (!val || val.toString().trim() === '') return null;
+                    const str = val.toString().trim();
+                    if (str.includes('$') || str.toUpperCase().includes('USD')) return str;
+                    return `$${str} USD`;
+                };
+
+                let kaplamaFiyat = null, sifirJant = null, tekerTanim = stokAdi;
+                if (fiyatSatiri) {
+                    const kolonlar = Object.keys(fiyatSatiri);
+                    tekerTanim   = fiyatSatiri[kolonlar[0]] || stokAdi;
+                    kaplamaFiyat = formatFiyat(fiyatSatiri[kolonlar[1]]);
+                    sifirJant    = formatFiyat(fiyatSatiri[kolonlar[2]]);
+                }
+
+                // ── Sipariş geçmişinde bu ürünü daha önce aldı mı?
+                let eskiFiyat = null;
+                if (kayitliMusteri) {
+                    const cu = cariAdi2.toUpperCase()
+                        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    const musteriSiparisler = (data2.siparisler || []).filter(r => {
+                        const cari = (r['Cari Adı'] || r['Cari Adi'] || r['CARİ ADI'] || '').toUpperCase()
+                            .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                            .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                        return cari.includes(cu) || cu.includes(cari);
+                    });
+
+                    const stokNorm = stokAdi.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const eslesen = musteriSiparisler.filter(r => {
+                        const tekerKol = r['Tekerlek Tanımı'] || r['Tekerlek Tanimi'] || r['TEKERLEK'] || Object.values(r)[2] || '';
+                        const tekerNorm = tekerKol.toLowerCase().replace(/[^a-z0-9]/g, '');
+                        return tekerNorm && (tekerNorm.includes(stokNorm) || stokNorm.includes(tekerNorm));
+                    });
+
+                    if (eslesen.length > 0) {
+                        const sonSiparis = eslesen[eslesen.length - 1];
+                        const fiyatKol = sonSiparis['Anlaşılan Fiyat'] || sonSiparis['Anlasilan Fiyat'] ||
+                                         sonSiparis['ANLAŞILAN FİYAT'] || sonSiparis['Fiyat'] || sonSiparis['FİYAT'] || '';
+                        if (fiyatKol && fiyatKol.toString().trim()) {
+                            eskiFiyat = formatFiyat(fiyatKol.toString().trim());
+                            console.log(`💰 Önceki fiyat bulundu: ${eskiFiyat} | Ürün: ${stokAdi} | Müşteri: ${cariAdi2}`);
+                        }
+                    }
+                }
+
+                // ── Senaryoya göre mesaj ve akış belirle
+                let fiyatMesaj, siparisSorusuGonder = true;
+
+                if (eskiFiyat) {
+                    // ✅ Kayıtlı müşteri + daha önce bu üründen almış → özel fiyatını göster
+                    fiyatMesaj   = `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 *${eskiFiyat}*\n\n_(Geçmiş siparişlerinize göre hesaplanmıştır)_`;
+                    kaplamaFiyat = eskiFiyat;
+                    sifirJant    = null;
+
+                } else if (kayitliMusteri && fiyatSatiri) {
+                    // ⚡ Kayıtlı müşteri ama bu üründen hiç almamış → liste fiyatı + yönetici bildirimi
+                    fiyatMesaj = `*${tekerTanim}* için liste fiyatımız:\n\n${
+                        sifirJant
+                        ? `🔧 *Kaplama:* ${kaplamaFiyat}\n✨ *Sıfır Jant:* ${sifirJant}`
+                        : `💰 ${kaplamaFiyat}`
+                    }\n\nSiz değerli müşterimiz olduğunuz için size özel indirimli fiyat sunmak istiyoruz. ✨ Mesajınızı yöneticimize iletiyorum, en kısa sürede sizinle iletişime geçilecek. 📲`;
+                    siparisSorusuGonder = false;
+
+                    // Gruba bildirim
+                    if (GRUP_ID) {
+                        const listeFiyatStr = sifirJant
+                            ? `Kaplama: ${kaplamaFiyat} | Sıfır Jant: ${sifirJant}`
+                            : kaplamaFiyat || '—';
+                        await axios.post('https://api.fonnte.com/send', {
+                            target: GRUP_ID,
+                            message: `📢 *Fiyat Talebi — Yönetici Onayı*\n\n👤 Müşteri: ${cariAdi2}\n📞 Tel: +${sender}\n📦 Ürün: ${tekerTanim}\n💰 Liste Fiyatı: ${listeFiyatStr}\n\n_Müşteri bu üründen daha önce almamış. İndirimli fiyat için onay bekleniyor._`,
+                            countryCode: '0'
+                        }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                        console.log(`📢 Yönetici bildirimi gönderildi -> ${GRUP_ID}`);
+                    }
+
+                } else if (fiyatSatiri) {
+                    // 🔓 Kayıtsız müşteri → sadece liste fiyatı
+                    fiyatMesaj = sifirJant
+                        ? `*${tekerTanim}* fiyatlarımız:\n\n🔧 *Kaplama* (müşteri kendi jantını getirir): ${kaplamaFiyat}\n✨ *Sıfır Jant* (jant dahil): ${sifirJant}`
+                        : `*${tekerTanim}* fiyatımız: ${kaplamaFiyat || 'Belirtilmemiş'}`;
+
+                } else {
+                    // ❌ Fiyat listesinde yok → Gemini'ye yönlendir
+                    console.log(`⚠️ Fiyat listesinde bulunamadı: ${stokAdi}`);
+                    siparisSession.set(sender, {
+                        ...(siparisSession.get(sender) || {}),
+                        state: null, secilenModel: detay.model, secilenStokAdi: stokAdi,
+                    });
+                    sessionKaydet(siparisSession);
+                    return;
+                }
+
+                // Fiyat mesajını gönder
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender, message: fiyatMesaj, countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+
+                if (siparisSorusuGonder && !erdemliYetkiliMi(cariAdi2)) {
+                    siparisSession.set(sender, {
+                        state:        'awaiting_order',
+                        cariAdi:      cariAdi2 || session.cariAdi || 'Müşteri',
+                        telefon:      sender,
+                        urunAdi:      tekerTanim,
+                        fiyat:        kaplamaFiyat || '',
+                        kaplamaFiyat: kaplamaFiyat || '',
+                        sifirJant:    sifirJant    || '',
+                        ciftOpsiyon:  !!(kaplamaFiyat && sifirJant),
+                        timestamp:    Date.now(),
+                    });
+                    sessionKaydet(siparisSession);
+
+                    setTimeout(async () => {
+                        await axios.post('https://api.fonnte.com/send', {
+                            target: sender,
+                            message: '🛒 *Bu ürünü sipariş vermek ister misiniz?*\n\n1️⃣ Evet, sipariş ver\n2️⃣ Hayır, vazgeçtim\n\nLütfen *1* veya *2* yazın.',
+                            countryCode: '0'
+                        }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                        console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | ${tekerTanim}`);
+                    }, 1500);
+                } else {
+                    siparisSession.delete(sender);
+                    sessionKaydet(siparisSession);
+                }
+                return;
+
             } else {
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
