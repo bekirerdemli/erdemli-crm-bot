@@ -526,6 +526,7 @@ app.post('/webhook', async (req, res) => {
             return telefonlar.includes(senderCleanErken);
         });
         const cariAdiErken = musteriErken ? (musteriErken['ÜNVANI 1'] || musteriErken['Cari Adı'] || '') : '';
+        const yetkiliErken = musteriErken ? (musteriErken['YETKİLİ'] || musteriErken['Yetkili'] || '').split(',')[0].trim() : '';
         const kayitliMusteriErken = !!musteriErken && !!cariAdiErken;
 
         const session = siparisSession.get(sender);
@@ -542,9 +543,14 @@ app.post('/webhook', async (req, res) => {
         // İlk mesaj veya selamlama → menü göster (session yoksa veya sadece cariAdi kayıtlıysa)
         if (!session || session.state === null) {
             if (selamlama || !session) {
-                // Menü göster
+                // Menü göster — yetkili adıyla selamla, şirket adıyla değil
+                const selamAdi = yetkiliErken
+                    ? yetkiliErken.split(' ')[0]  // İlk isim (örn: "ÖMER ERDEMLI" → "ÖMER")
+                    : (cariAdiErken ? cariAdiErken.split(' ')[0] : '');
+                const selamStr = selamAdi ? ` ${selamAdi}` : '';
+
                 const menu = kayitliMusteriErken
-                    ? `Merhaba${cariAdiErken ? ' ' + cariAdiErken.split(' ')[0] : ''}! 👋\n\n` + MENU_KAYITLI
+                    ? `Merhaba${selamStr}! 👋\n\n` + MENU_KAYITLI
                     : MENU_YENI;
 
                 siparisSession.set(sender, {
@@ -569,10 +575,13 @@ app.post('/webhook', async (req, res) => {
             if (kayitli) {
                 // KAYITLI MÜŞTERİ MENÜSÜ
                 switch (secim) {
-                    case 1: // Borç/Bakiye
-                        siparisSession.set(sender, { ...session, state: null });
+                    case 1: // Borç/Bakiye — Gemini'ye bakiye sorusu olarak yönlendir
+                        siparisSession.set(sender, { ...session, state: 'awaiting_gemini', konu: 'bakiye' });
                         sessionKaydet(siparisSession);
-                        // Gemini'ye düş — bakiye sorusu olarak işlenir
+                        // Yapay mesaj oluşturup Gemini'ye gönder
+                        await whatsappGonder(sender, '🔍 Bakiye bilginizi sorguluyorum...');
+                        // message'ı override et ki Gemini bakiye sorusu olarak anlasın
+                        Object.assign(req.body, { message: 'bakiye borcum ne kadar' });
                         break;
                     case 2: // Lastik fiyatı
                         siparisSession.set(sender, { ...session, state: null });
@@ -594,15 +603,17 @@ app.post('/webhook', async (req, res) => {
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '📝 Şikayet veya önerinizi yazabilirsiniz, yöneticimize ileteceğim:');
                         return;
-                    case 5: // Teslim alınmayan jant
+                    case 5: // Teslim alınmayan jant bilgilendirme
                         siparisSession.set(sender, { ...session, state: null });
                         sessionKaydet(siparisSession);
-                        // Gemini'ye düş — eksik jant sorusu
+                        await whatsappGonder(sender, '🔍 Teslim alınmayan jant bilgilerinizi sorguluyorum...');
+                        Object.assign(req.body, { message: 'teslim alınmayan eksik jantlarım hangileri' });
                         break;
                     case 6: // Açık sipariş
                         siparisSession.set(sender, { ...session, state: null });
                         sessionKaydet(siparisSession);
-                        // Gemini'ye düş — açık sipariş sorusu
+                        await whatsappGonder(sender, '🔍 Açık siparişlerinizi sorguluyorum...');
+                        Object.assign(req.body, { message: 'açık siparişlerim hangileri kaç gündür bekliyor' });
                         break;
                     case 7: // Teknik bilgi
                         siparisSession.set(sender, { ...session, state: 'awaiting_teknik' });
@@ -612,7 +623,7 @@ app.post('/webhook', async (req, res) => {
                     case 8: // Diğer
                         siparisSession.set(sender, { ...session, state: null });
                         sessionKaydet(siparisSession);
-                        await whatsappGonder(sender, 'Lütfen sorunuzu veya talebinizi yazın, en kısa sürede yardımcı olacağım. 😊');
+                        await whatsappGonder(sender, 'Talebinizi veya sorunuzu yazabilirsiniz, size yardımcı olmaya çalışacağım. 😊');
                         return;
                     default:
                         await whatsappGonder(sender, `❓ Lütfen 1-8 arasında bir numara yazın.\n\n${MENU_KAYITLI}`);
