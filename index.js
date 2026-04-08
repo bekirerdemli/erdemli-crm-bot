@@ -656,14 +656,17 @@ app.post('/webhook', async (req, res) => {
                 siparisSession.set(sender, { ...session, state: 'awaiting_yukseklik', secilenMarka: secilen_marka });
                 sessionKaydet(siparisSession);
 
-                // Bu marka için mevcut yükseklikleri bul
+                // Bu marka için mevcut yükseklikleri bul — tüm kolonlarda marka ara
                 const data2 = await fetchAllData();
                 const yukseklikler = new Set();
                 (data2.makinalar || []).forEach(r => {
-                    const vals = Object.values(r);
-                    const marka = (vals[0] || '').toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-                    if (marka.includes(secilen_marka)) {
-                        const tip = (vals[2] || '');
+                    const satirStr = Object.values(r).join(' ').toUpperCase()
+                        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    if (satirStr.includes(secilen_marka)) {
+                        // Yüksekliği makina tipi kolonundan çıkar (vals[2] genelde makina tipi)
+                        const vals = Object.values(r);
+                        const tip = (vals[2] || vals[1] || '');
                         const m = tip.match(/(\d{1,2})[,.]?\d*\s*m/i);
                         if (m) yukseklikler.add(parseInt(m[1]));
                     }
@@ -721,11 +724,15 @@ app.post('/webhook', async (req, res) => {
             if (yukseklik) {
                 const marka = session.secilenMarka;
                 const eslesenMak = (data2.makinalar || []).filter(r => {
+                    // Tüm kolonlarda marka ara (vals[0] her zaman marka olmayabilir)
+                    const satirStr = Object.values(r).join(' ').toUpperCase()
+                        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
                     const vals = Object.values(r);
-                    const markaStr = (vals[0] || '').toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-                    const tipStr = (vals[2] || '');
-                    const yOk = tipStr.includes(yukseklik + 'm') || tipStr.includes(yukseklik + ',') || tipStr.includes(yukseklik + '.') || new RegExp(`\\b${yukseklik}\\s*m`, 'i').test(tipStr);
-                    return markaStr.includes(marka) && yOk;
+                    const tipStr = (vals[2] || vals[1] || '');
+                    const yOk = tipStr.includes(yukseklik + 'm') || tipStr.includes(yukseklik + ',') ||
+                                tipStr.includes(yukseklik + '.') || new RegExp(`\\b${yukseklik}\\s*m`, 'i').test(tipStr);
+                    return satirStr.includes(marka) && yOk;
                 });
 
                 if (eslesenMak.length === 0) {
@@ -1062,10 +1069,12 @@ Lütfen *1* veya *2* yazın.`;
             if (markaBul && !yukseklikBul) {
                 const yukseklikler = new Set();
                 (data.makinalar || []).forEach(r => {
-                    const vals = Object.values(r);
-                    const marka = (vals[0] || '').toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-                    if (marka.includes(markaBul)) {
-                        const m = (vals[2] || '').match(/(\d{1,2})[,.]?\d*\s*m/i);
+                    const satirStr = Object.values(r).join(' ').toUpperCase()
+                        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    if (satirStr.includes(markaBul)) {
+                        const vals = Object.values(r);
+                        const m = (vals[2] || vals[1] || '').match(/(\d{1,2})[,.]?\d*\s*m/i);
                         if (m) yukseklikler.add(parseInt(m[1]));
                     }
                 });
@@ -1094,15 +1103,20 @@ Lütfen *1* veya *2* yazın.`;
 
             // ── Ne marka ne yükseklik var — kademeli akışı başlat: önce marka sor ──
             if (!markaBul) {
-                // Makina rehberindeki tüm markaları çıkar
-                const markaSet = new Set();
-                (data.makinalar || []).forEach(r => {
-                    const marka = (Object.values(r)[0] || '').trim().toUpperCase()
-                        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
-                        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-                    if (marka) markaSet.add(marka);
-                });
-                const markaListesi = [...markaSet].sort();
+                // Sabit marka listesi — makina rehberindeki ilk kolondan okumak hatalı sonuç verebilir
+                const BILINEN_MARKALAR = ['DINGLI','ELS','GENIE','HAULOTTE','JLG','LGMG','MANTALL','SINOBOOM','SKYJACK','SNORKEL','ZOOMLION'];
+
+                // Makina rehberinde gerçekten bulunan markaları filtrele
+                const mevcutMarkalar = BILINEN_MARKALAR.filter(marka =>
+                    (data.makinalar || []).some(r =>
+                        Object.values(r).join(' ').toUpperCase()
+                            .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                            .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C')
+                            .includes(marka)
+                    )
+                );
+
+                const markaListesi = mevcutMarkalar.length > 0 ? mevcutMarkalar : BILINEN_MARKALAR;
                 const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','1️⃣1️⃣','1️⃣2️⃣','1️⃣3️⃣','1️⃣4️⃣','1️⃣5️⃣'];
                 const markaStr = markaListesi.map((m,i) => `${emojiR[i]||i+1+'.'} ${m}`).join('\n');
 
