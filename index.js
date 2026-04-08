@@ -454,6 +454,53 @@ function temizleYanit(metin) {
     return metin.replace(/\s*\[URUN:[^\]]+\]/gi, '').trim();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// MENÜ METİNLERİ
+// ═══════════════════════════════════════════════════════════════
+const MENU_KAYITLI = `Merhaba! Size nasıl yardımcı olabilirim? 😊
+
+1️⃣ Borç / Bakiye sorgulama
+2️⃣ Lastik fiyatı öğrenme
+3️⃣ Lastik siparişi verme
+4️⃣ Şikayet / Öneri bildirimi
+5️⃣ Teslim alınmayan jant bilgilendirme
+6️⃣ Açık sipariş sorgulama
+7️⃣ Teknik bilgi öğrenme
+8️⃣ Diğer
+
+Lütfen numarasını yazın.`;
+
+const MENU_YENI = `Merhaba! Erdemli Kauçuk'a hoş geldiniz 👋
+
+Size nasıl yardımcı olabilirim?
+
+1️⃣ Yeni müşteri kaydı oluştur
+2️⃣ Lastik fiyatı öğren
+3️⃣ Lastik siparişi ver
+
+📌 *Not:* Kayıtlı müşterilerimiz %5 RobERD indirimi ve özel fiyat avantajından yararlanır.
+
+Lütfen numarasını yazın.`;
+
+// İskonto kampanya bitiş tarihi: 08.04.2026
+const KAMPANYA_BITIS = new Date('2026-04-08T00:00:00+03:00').getTime();
+
+function iskontoluMu(siparis) {
+    // Siparişin tarihi kampanya bitiş tarihinden önceyse %5 ekstra iskonto uygulanır
+    const tarihKol = siparis['Kayıt Tarihi'] || siparis['Tarih'] || siparis['TARİH'] || '';
+    if (!tarihKol) return false;
+    const tarih = new Date(tarihKol).getTime();
+    return !isNaN(tarih) && tarih < KAMPANYA_BITIS;
+}
+
+async function whatsappGonder(target, message) {
+    return axios.post('https://api.fonnte.com/send', {
+        target, message, countryCode: '0'
+    }, { headers: { 'Authorization': FONNTE_TOKEN } });
+}
+
+
+
 app.post('/webhook', async (req, res) => {
     res.status(200).send({ status: true });
     const sender  = req.body.sender;
@@ -470,10 +517,199 @@ app.post('/webhook', async (req, res) => {
         console.log(`\n💬 ${sender} | ${message}`);
 
         // ═══════════════════════════════════════════════════════════════
-        // SİPARİŞ ONAY AKIŞI — Gemini'ye gerek yok, doğrudan yönetilir
+        // MÜŞTERI TESPİTİ — Her akışta lazım
         // ═══════════════════════════════════════════════════════════════
+        const dataErken = await fetchAllData();
+        const senderCleanErken = cleanPhone(sender);
+        const musteriErken = (dataErken.cariler || []).find(c => {
+            const telefonlar = (c['TELEFON'] || '').split(',').map(t => cleanPhone(t.trim())).filter(Boolean);
+            return telefonlar.includes(senderCleanErken);
+        });
+        const cariAdiErken = musteriErken ? (musteriErken['ÜNVANI 1'] || musteriErken['Cari Adı'] || '') : '';
+        const kayitliMusteriErken = !!musteriErken && !!cariAdiErken;
+
         const session = siparisSession.get(sender);
-        const msgNorm = message.trim().toUpperCase();
+        const msgNorm = message.trim().toUpperCase()
+            .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+            .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+
+        // ═══════════════════════════════════════════════════════════════
+        // MENÜ AKIŞI — İlk selamlama veya menü bekleniyor
+        // ═══════════════════════════════════════════════════════════════
+        const selamlama = /^(MERHABA|SELAM|SA|HEY|İYİ|IYI|GÜNAYD|GUNAYD|HOSGELDIN|HOSGELDI|AÇIN|ACIN|HI|HELLO|TEKRAR|YENİ|YENI)/i.test(message.trim()) ||
+                          message.trim().length <= 8;
+
+        // İlk mesaj veya selamlama → menü göster (session yoksa veya sadece cariAdi kayıtlıysa)
+        if (!session || session.state === null) {
+            if (selamlama || !session) {
+                // Menü göster
+                const menu = kayitliMusteriErken
+                    ? `Merhaba${cariAdiErken ? ' ' + cariAdiErken.split(' ')[0] : ''}! 👋\n\n` + MENU_KAYITLI
+                    : MENU_YENI;
+
+                siparisSession.set(sender, {
+                    state: 'awaiting_menu',
+                    kayitli: kayitliMusteriErken,
+                    cariAdi: cariAdiErken,
+                    timestamp: Date.now(),
+                });
+                sessionKaydet(siparisSession);
+
+                await whatsappGonder(sender, menu);
+                console.log(`📋 Menü gönderildi -> ${sender} | kayıtlı: ${kayitliMusteriErken}`);
+                return;
+            }
+        }
+
+        // ─── MENÜ SEÇİMİ ───
+        if (session && session.state === 'awaiting_menu') {
+            const secim = parseInt(message.trim());
+            const kayitli = session.kayitli;
+
+            if (kayitli) {
+                // KAYITLI MÜŞTERİ MENÜSÜ
+                switch (secim) {
+                    case 1: // Borç/Bakiye
+                        siparisSession.set(sender, { ...session, state: null });
+                        sessionKaydet(siparisSession);
+                        // Gemini'ye düş — bakiye sorusu olarak işlenir
+                        break;
+                    case 2: // Lastik fiyatı
+                        siparisSession.set(sender, { ...session, state: null });
+                        sessionKaydet(siparisSession);
+                        // Lastik akışını başlat
+                        await whatsappGonder(sender, 'Makinenizin markasını öğrenebilir miyim? 🔧\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)');
+                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
+                        sessionKaydet(siparisSession);
+                        return;
+                    case 3: // Sipariş verme
+                        siparisSession.set(sender, { ...session, state: null });
+                        sessionKaydet(siparisSession);
+                        await whatsappGonder(sender, 'Sipariş vermek için önce makinenizin markasını öğrenelim 🔧\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)');
+                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
+                        sessionKaydet(siparisSession);
+                        return;
+                    case 4: // Şikayet/Öneri
+                        siparisSession.set(sender, { ...session, state: 'awaiting_sikayet' });
+                        sessionKaydet(siparisSession);
+                        await whatsappGonder(sender, '📝 Şikayet veya önerinizi yazabilirsiniz, yöneticimize ileteceğim:');
+                        return;
+                    case 5: // Teslim alınmayan jant
+                        siparisSession.set(sender, { ...session, state: null });
+                        sessionKaydet(siparisSession);
+                        // Gemini'ye düş — eksik jant sorusu
+                        break;
+                    case 6: // Açık sipariş
+                        siparisSession.set(sender, { ...session, state: null });
+                        sessionKaydet(siparisSession);
+                        // Gemini'ye düş — açık sipariş sorusu
+                        break;
+                    case 7: // Teknik bilgi
+                        siparisSession.set(sender, { ...session, state: 'awaiting_teknik' });
+                        sessionKaydet(siparisSession);
+                        await whatsappGonder(sender, '🔧 Hangi konuda teknik bilgi almak istiyorsunuz?\n\nSorunuzu yazabilirsiniz:');
+                        return;
+                    case 8: // Diğer
+                        siparisSession.set(sender, { ...session, state: null });
+                        sessionKaydet(siparisSession);
+                        await whatsappGonder(sender, 'Lütfen sorunuzu veya talebinizi yazın, en kısa sürede yardımcı olacağım. 😊');
+                        return;
+                    default:
+                        await whatsappGonder(sender, `❓ Lütfen 1-8 arasında bir numara yazın.\n\n${MENU_KAYITLI}`);
+                        return;
+                }
+            } else {
+                // YENİ MÜŞTERİ MENÜSÜ
+                switch (secim) {
+                    case 1: // Yeni kayıt
+                        siparisSession.set(sender, { ...session, state: 'awaiting_kayit_firma' });
+                        sessionKaydet(siparisSession);
+                        await whatsappGonder(sender, '📋 *Müşteri Kayıt Formu*\n\nFirmanızın tam ticari unvanını yazar mısınız?');
+                        return;
+                    case 2: // Fiyat
+                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
+                        sessionKaydet(siparisSession);
+                        await whatsappGonder(sender, '🔧 Makinenizin markasını öğrenebilir miyim?\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)\n\n📌 Cari kaydı yaptırırsanız %5 indirimden yararlanabilirsiniz.');
+                        return;
+                    case 3: // Sipariş
+                        siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
+                        sessionKaydet(siparisSession);
+                        await whatsappGonder(sender, '🔧 Sipariş için önce makinenizin markasını öğrenelim.\n\nMarka adını yazmanız yeterli.\n\n📌 Cari kaydı yaptırırsanız %5 indirimden yararlanabilirsiniz.');
+                        return;
+                    default:
+                        await whatsappGonder(sender, `❓ Lütfen 1-3 arasında bir numara yazın.\n\n${MENU_YENI}`);
+                        return;
+                }
+            }
+        }
+
+        // ─── ŞİKAYET AKIŞI ───
+        if (session && session.state === 'awaiting_sikayet') {
+            siparisSession.delete(sender); sessionKaydet(siparisSession);
+            if (GRUP_ID) {
+                await whatsappGonder(GRUP_ID,
+                    `📣 *Şikayet / Öneri Bildirimi*\n\n👤 Müşteri: ${session.cariAdi || 'Bilinmeyen'}\n📞 Tel: +${sender}\n\n💬 Mesaj:\n${message}`
+                );
+            }
+            await whatsappGonder(sender, '✅ Şikayet / öneriniz alındı. Yöneticimize iletildi, en kısa sürede sizinle iletişime geçilecek. Teşekkürler! 🙏');
+            return;
+        }
+
+        // ─── TEKNİK BİLGİ DOĞRUDAN SORUSU ───
+        if (session && session.state === 'awaiting_teknik') {
+            siparisSession.set(sender, { ...session, state: null });
+            sessionKaydet(siparisSession);
+            // Gemini'ye düş — teknik soru olarak işlenir
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // YENİ MÜŞTERİ KAYIT AKIŞI
+        // ═══════════════════════════════════════════════════════════════
+        if (session && session.state === 'awaiting_kayit_firma') {
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_adres', kayitFirma: message.trim() });
+            sessionKaydet(siparisSession);
+            await whatsappGonder(sender, '📍 Firmanızın adresini yazar mısınız?');
+            return;
+        }
+
+        if (session && session.state === 'awaiting_kayit_adres') {
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_vd', kayitAdres: message.trim() });
+            sessionKaydet(siparisSession);
+            await whatsappGonder(sender, '🏛️ Vergi dairenizi yazar mısınız?');
+            return;
+        }
+
+        if (session && session.state === 'awaiting_kayit_vd') {
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_vn', kayitVD: message.trim() });
+            sessionKaydet(siparisSession);
+            await whatsappGonder(sender, '🔢 Vergi numaranızı yazar mısınız?');
+            return;
+        }
+
+        if (session && session.state === 'awaiting_kayit_vn') {
+            const kayitBilgi = {
+                firma:   session.kayitFirma || '—',
+                adres:   session.kayitAdres || '—',
+                vd:      session.kayitVD    || '—',
+                vn:      message.trim(),
+                telefon: sender,
+            };
+            siparisSession.delete(sender); sessionKaydet(siparisSession);
+
+            // Gruba bildir
+            if (GRUP_ID) {
+                await whatsappGonder(GRUP_ID,
+                    `🆕 *Yeni Müşteri Kayıt Talebi*\n\n🏢 Firma: ${kayitBilgi.firma}\n📍 Adres: ${kayitBilgi.adres}\n🏛️ Vergi Dairesi: ${kayitBilgi.vd}\n🔢 Vergi No: ${kayitBilgi.vn}\n📞 Tel: +${kayitBilgi.telefon}\n\n_RobERD üzerinden gelen kayıt talebi._`
+                );
+            }
+
+            await whatsappGonder(sender,
+                `✅ *Bilgileriniz alındı!*\n\n🏢 ${kayitBilgi.firma}\n📍 ${kayitBilgi.adres}\n🏛️ ${kayitBilgi.vd} / ${kayitBilgi.vn}\n\nYetkilimiz en kısa sürede kaydınızı oluşturup sizinle iletişime geçecek. 🙏\n\n📌 Kaydınız tamamlandıktan sonra *%5 RobERD indirimi* ve *özel müşteri fiyatı* avantajlarından yararlanabilirsiniz.`
+            );
+            return;
+        }
+
+
 
         // AŞAMA 1.5: Müşteri model listesinden numara seçti
         if (session && session.state === 'awaiting_model') {
@@ -509,15 +745,19 @@ app.post('/webhook', async (req, res) => {
                 };
 
                 // %5 RobERD iskontosu uygula
+                // Kampanya: 08.04.2026 öncesi siparişler %5 indirimli; sonrası zaten iskontolu sayılır
                 const ISKONTO_ORAN = 0.05;
+                const kampanyaAktif = Date.now() <= KAMPANYA_BITIS;
                 const iskontoluFiyat = (fiyatStr) => {
-                    if (!fiyatStr) return null;
+                    if (!fiyatStr || !kampanyaAktif) return null;
                     const sayi = parseFloat(fiyatStr.replace(/[^0-9.,]/g, '').replace(',', '.'));
                     if (isNaN(sayi)) return null;
                     const indirimli = (sayi * (1 - ISKONTO_ORAN)).toFixed(2);
                     return `$${indirimli} USD`;
                 };
-                const iskontoBilgisi = `\n\n🎁 *RobERD'den özel fiyat:* Yukarıdaki fiyata WhatsApp üzerinden sipariş verdiğiniz için *%5 indirim* uygulanmaktadır.`;
+                const iskontoBilgisi = kampanyaAktif
+                    ? `\n\n🎁 *RobERD'den özel fiyat:* WhatsApp üzerinden sipariş verdiğiniz için *%5 indirim* uygulanmaktadır.`
+                    : '';
 
                 let kaplamaFiyat = null, sifirJant = null, tekerTanim = stokAdi;
                 if (fiyatSatiri) {
@@ -562,9 +802,11 @@ app.post('/webhook', async (req, res) => {
                 let fiyatMesaj, siparisSorusuGonder = true;
 
                 if (eskiFiyat) {
-                    // ✅ Kayıtlı müşteri + daha önce bu üründen almış → önceki fiyat + %5 indirimli
-                    const eskiIndirimli = iskontoluFiyat(eskiFiyat);
-                    fiyatMesaj = `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 Liste fiyatı: ~~${eskiFiyat}~~\n🎁 *RobERD indirimi (%5):* *${eskiIndirimli}*\n\n_WhatsApp üzerinden sipariş verdiğiniz için %5 indirim uygulanmaktadır._`;
+                    // ✅ Kayıtlı müşteri + daha önce bu üründen almış → önceki fiyat + kampanya kontrolü
+                    const eskiIndirimli = kampanyaAktif ? iskontoluFiyat(eskiFiyat) : null;
+                    fiyatMesaj = eskiIndirimli
+                        ? `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 Liste fiyatı: ~~${eskiFiyat}~~\n🎁 *RobERD indirimi (%5):* *${eskiIndirimli}*\n\n_WhatsApp üzerinden sipariş verdiğiniz için %5 indirim uygulanmaktadır._`
+                        : `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 *${eskiFiyat}*\n\n_(Geçmiş siparişlerinize göre hesaplanmıştır)_`;
                     kaplamaFiyat = eskiIndirimli || eskiFiyat;
                     sifirJant    = null;
 
