@@ -996,23 +996,9 @@ Lütfen *1* veya *2* yazın.`;
         // Yükseklik tespiti
         const yukseklikBul = msgU2.match(/(\d{1,2})\s*(M\b|METRE|METER)/);
 
-        // Marka tespiti — önce sabit listede ara, sonra makina rehberinde, sonra fiyat listesinde
-        const markalarSabit = ['DINGLI','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS','LGMG','AIRO','MERLO','MAGNI','NIFTYLIFT','TOUCAN','MULTITEL'];
-        let markaBul = markalarSabit.find(m => msgU2.includes(m));
-
-        // Sabit listede yoksa — tüm makinalar ve fiyat listesindeki markaları tara
-        if (!markaBul) {
-            const tumMarkalar = new Set();
-            (data.makinalar || []).forEach(r => { const v = Object.values(r)[0]; if(v) tumMarkalar.add(v.toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C')); });
-            (data.urunler || []).forEach(r => {
-                const v = Object.values(r)[0];
-                if(v) {
-                    const kelimeler = v.toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C').split(/[\s\(]/);
-                    kelimeler.forEach(k => { if(k.length > 2) tumMarkalar.add(k); });
-                }
-            });
-            markaBul = [...tumMarkalar].find(m => m.length > 2 && msgU2.includes(m));
-        }
+        // Marka tespiti — sadece sabit güvenilir listede ara (kelime sınırıyla)
+        const markalarSabit = ['DINGLI','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS','AIRO','MERLO','MAGNI','NIFTYLIFT','TOUCAN','MULTITEL','SNORKEL','MANTALL'];
+        let markaBul = markalarSabit.find(m => new RegExp(`\\b${m}\\b`).test(msgU2));
 
         // Lastik/makine sorusu mu? Tetikleyici kelimeler — msgU2 üzerinde çalıştır (normalleştirilmiş)
         const lastikSorusu = /LAST[IUG]|TEKERK|MAKA[SC]|PLATFORM|METRE|MAKINA|MACH|TIRES?|WHEEL/i.test(msgU2);
