@@ -550,9 +550,10 @@ app.post('/webhook', async (req, res) => {
         const selamlama = /^(MERHABA|SELAM|SA|HEY|İYİ|IYI|GÜNAYD|GUNAYD|HOSGELDIN|HOSGELDI|AÇIN|ACIN|HI|HELLO|TEKRAR|YENİ|YENI)/i.test(message.trim()) ||
                           message.trim().length <= 8;
 
-        // İlk mesaj veya selamlama → menü göster (session yoksa veya sadece cariAdi kayıtlıysa)
+        // İlk mesaj veya selamlama → menü göster
         if (!session || session.state === null) {
-            if (selamlama || !session) {
+            // Yeni kullanıcı (!session) veya selamlama → her durumda menü
+            if (!session || selamlama) {
                 // Menü göster — yetkili adıyla selamla, şirket adıyla değil
                 const selamAdi = yetkiliErken
                     ? yetkiliErken.split(' ')[0]  // İlk isim (örn: "ÖMER ERDEMLI" → "ÖMER")
@@ -591,10 +592,10 @@ app.post('/webhook', async (req, res) => {
             const secim = parseInt(message.trim());
             const kayitli = session.kayitli;
 
-            // Sayı değilse menüyü tekrar göster
-            if (isNaN(secim)) {
+            // Sayı değilse — sessizce menüyü tekrar göster, ❓ ekleme
+            if (isNaN(secim) || secim < 1) {
                 const menu = kayitli ? MENU_KAYITLI : MENU_YENI;
-                await whatsappGonder(sender, `❓ Lütfen menüden bir numara seçin:\n\n${menu}`);
+                await whatsappGonder(sender, menu);
                 return;
             }
 
