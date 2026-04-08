@@ -790,10 +790,15 @@ app.post('/webhook', async (req, res) => {
                 const cariAdi2 = musteri2 ? (musteri2['ÜNVANI 1'] || musteri2['Cari Adı'] || '') : '';
                 const kayitliMusteri = !!musteri2 && !!cariAdi2;
 
-                // ── Liste fiyatını bul
+                // ── Liste fiyatını bul — tam eşleşme, sonra esnek eşleşme
                 const fiyatSatiri = (data2.urunler || []).find(r => {
                     const tanim = (Object.values(r)[0] || '').trim();
                     return tanim === stokAdi || tanim.toLowerCase() === stokAdi.toLowerCase();
+                }) || (data2.urunler || []).find(r => {
+                    // Esnek eşleşme: stokAdi içindeki sayısal ölçü fiyat listesinde geçiyor mu?
+                    const tanim = (Object.values(r)[0] || '').trim().toLowerCase();
+                    const stokNorm2 = stokAdi.toLowerCase();
+                    return tanim.includes(stokNorm2) || stokNorm2.includes(tanim);
                 });
 
                 const formatFiyat = (val) => {
@@ -861,57 +866,44 @@ app.post('/webhook', async (req, res) => {
                 let fiyatMesaj, siparisSorusuGonder = true;
 
                 if (eskiFiyat) {
-                    // ✅ Kayıtlı müşteri + daha önce bu üründen almış → önceki fiyat + kampanya kontrolü
+                    // ✅ Daha önce bu üründen almış → önceki anlaşılan fiyat + %5
                     const eskiIndirimli = kampanyaAktif ? iskontoluFiyat(eskiFiyat) : null;
                     fiyatMesaj = eskiIndirimli
                         ? `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 Liste fiyatı: ~~${eskiFiyat}~~\n🎁 *RobERD indirimi (%5):* *${eskiIndirimli}*\n\n_WhatsApp üzerinden sipariş verdiğiniz için %5 indirim uygulanmaktadır._`
-                        : `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 *${eskiFiyat}*\n\n_(Geçmiş siparişlerinize göre hesaplanmıştır)_`;
+                        : `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 *${eskiFiyat}*`;
                     kaplamaFiyat = eskiIndirimli || eskiFiyat;
                     sifirJant    = null;
 
-                } else if (kayitliMusteri && fiyatSatiri) {
-                    // ⚡ Kayıtlı müşteri ama bu üründen hiç almamış → liste + %5 indirim + yönetici bildirimi
-                    const kapIndirimli  = iskontoluFiyat(kaplamaFiyat);
-                    const sifirIndirimli = iskontoluFiyat(sifirJant);
-                    fiyatMesaj = `*${tekerTanim}* için fiyatlarımız:\n\n${
-                        sifirJant
-                        ? `🔧 *Kaplama:* ~~${kaplamaFiyat}~~ → *${kapIndirimli}*\n✨ *Sıfır Jant:* ~~${sifirJant}~~ → *${sifirIndirimli}*`
-                        : `💰 ~~${kaplamaFiyat}~~ → *${kapIndirimli}*`
-                    }\n\n🎁 *RobERD indirimi (%5) uygulanmıştır.*\n\nAyrıca siz değerli müşterimiz olduğunuz için ek indirim seçenekleri için mesajınızı yöneticimize iletiyorum. 📲`;
-                    siparisSorusuGonder = false;
-
-                    // Gruba bildirim
-                    if (GRUP_ID) {
-                        const listeFiyatStr = sifirJant
-                            ? `Kaplama: ${kaplamaFiyat} (indirimli: ${iskontoluFiyat(kaplamaFiyat)}) | Sıfır Jant: ${sifirJant} (indirimli: ${iskontoluFiyat(sifirJant)})`
-                            : `${kaplamaFiyat} (indirimli: ${iskontoluFiyat(kaplamaFiyat)})`;
-                        await axios.post('https://api.fonnte.com/send', {
-                            target: GRUP_ID,
-                            message: `📢 *Fiyat Talebi — Yönetici Onayı*\n\n👤 Müşteri: ${cariAdi2}\n📞 Tel: +${sender}\n📦 Ürün: ${tekerTanim}\n💰 Fiyat: ${listeFiyatStr}\n\n_Müşteri bu üründen daha önce almamış. Ek indirim için onay bekleniyor._`,
-                            countryCode: '0'
-                        }, { headers: { 'Authorization': FONNTE_TOKEN } });
-                        console.log(`📢 Yönetici bildirimi gönderildi -> ${GRUP_ID}`);
-                    }
-
                 } else if (fiyatSatiri) {
-                    // 🔓 Kayıtsız müşteri → liste fiyatı + %5 RobERD indirimi
+                    // ✅ Fiyat listesinde var (daha önce almamış veya kayıtsız müşteri) → liste fiyatı + %5
                     const kapIndirimli   = iskontoluFiyat(kaplamaFiyat);
                     const sifirIndirimli = iskontoluFiyat(sifirJant);
                     fiyatMesaj = sifirJant
                         ? `*${tekerTanim}* fiyatlarımız:\n\n🔧 *Kaplama* (müşteri kendi jantını getirir):\n   ~~${kaplamaFiyat}~~ → *${kapIndirimli}*\n\n✨ *Sıfır Jant* (jant dahil):\n   ~~${sifirJant}~~ → *${sifirIndirimli}*${iskontoBilgisi}`
                         : `*${tekerTanim}* fiyatımız:\n\n💰 ~~${kaplamaFiyat}~~ → *${kapIndirimli}*${iskontoBilgisi}`;
-                    // İskontolu fiyatı sipariş akışına aktar
                     kaplamaFiyat = kapIndirimli || kaplamaFiyat;
                     sifirJant    = sifirIndirimli || sifirJant;
 
                 } else {
-                    // ❌ Fiyat listesinde yok → Gemini'ye yönlendir
+                    // ❌ Fiyat listesinde yok → kullanıcıya bildir ve menüye dön
                     console.log(`⚠️ Fiyat listesinde bulunamadı: ${stokAdi}`);
+                    await whatsappGonder(sender,
+                        `⚠️ *${stokAdi}* için fiyat bilgisi sistemde bulunamadı.\n\nYetkilimiz en kısa sürede sizinle iletişime geçecek. 📞\n\n_Başka bir konuda yardımcı olabilmem için bir şey yazın._`
+                    );
+                    const mevcutSesOnceki = siparisSession.get(sender) || {};
                     siparisSession.set(sender, {
-                        ...(siparisSession.get(sender) || {}),
-                        state: null, secilenModel: detay.model, secilenStokAdi: stokAdi,
+                        ...mevcutSesOnceki,
+                        state: 'awaiting_menu_trigger',
+                        kayitli: kayitliMusteri,
+                        cariAdi: cariAdi2,
                     });
                     sessionKaydet(siparisSession);
+                    // Gruba bildir
+                    if (GRUP_ID) {
+                        await whatsappGonder(GRUP_ID,
+                            `⚠️ *Fiyat Bulunamadı*\n\n👤 Müşteri: ${cariAdi2 || 'Bilinmeyen'}\n📞 Tel: +${sender}\n📦 Ürün: ${stokAdi}\n\n_Sistemde fiyat kaydı yok, müşteriyle iletişime geçilmeli._`
+                        );
+                    }
                     return;
                 }
 
