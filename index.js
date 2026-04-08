@@ -493,6 +493,151 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // KADEMELİ MAKİNA FİLTRELEME AKIŞI
+        // Müşteri genel bir lastik/platform sorusu sorduğunda adım adım daralt:
+        // Adım 1: Marka sor → Adım 2: Yükseklik sor → Adım 3: Model listesini sun
+        // ═══════════════════════════════════════════════════════════════
+
+        // Adım 1 yanıtı: Marka seçildi, şimdi yükseklik sor
+        if (session && session.state === 'awaiting_marka') {
+            const bilinen_markalar = ['DINGLI','GENIE','JLG','HAULOTTE','SKYJACK','SINOBOOM','LGMG','ZOOMLION','MANITOU','ELS','SNORKEL','MANTALL'];
+            const secimNo = parseInt(msgNorm) - 1;
+            let secilen_marka = null;
+
+            // Numara ile seçim
+            if (!isNaN(secimNo) && secimNo >= 0 && session.markaListesi && session.markaListesi[secimNo]) {
+                secilen_marka = session.markaListesi[secimNo];
+            }
+            // Direkt marka adı yazdıysa
+            else {
+                secilen_marka = bilinen_markalar.find(m => msgNorm.includes(m));
+                if (!secilen_marka && session.markaListesi) {
+                    secilen_marka = session.markaListesi.find(m => msgNorm.includes(m.toUpperCase()));
+                }
+            }
+
+            if (secilen_marka) {
+                siparisSession.set(sender, { ...session, state: 'awaiting_yukseklik', secilenMarka: secilen_marka });
+                sessionKaydet(siparisSession);
+
+                // Bu marka için mevcut yükseklikleri bul
+                const data2 = await fetchAllData();
+                const yukseklikler = new Set();
+                (data2.makinalar || []).forEach(r => {
+                    const vals = Object.values(r);
+                    const marka = (vals[0] || '').toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    if (marka.includes(secilen_marka)) {
+                        const tip = (vals[2] || '');
+                        const m = tip.match(/(\d{1,2})[,.]?\d*\s*m/i);
+                        if (m) yukseklikler.add(parseInt(m[1]));
+                    }
+                });
+
+                const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                const sirali = [...yukseklikler].sort((a,b)=>a-b);
+                const yList = sirali.length > 0
+                    ? sirali.map((y,i) => `${emojiR[i]||i+1+'.'} ${y} metre`).join('\n')
+                    : null;
+
+                const mesaj2 = yList
+                    ? `*${secilen_marka}* için makinenizin çalışma yüksekliği nedir?\n\n${yList}\n\nNumarasını yazmanız yeterli. Ya da yüksekliği doğrudan yazabilirsiniz (örn: 8 metre).`
+                    : `*${secilen_marka}* için makinenizin çalışma yüksekliğini yazın. (örn: 8 metre, 10 metre)`;
+
+                siparisSession.set(sender, {
+                    ...session,
+                    state: 'awaiting_yukseklik',
+                    secilenMarka: secilen_marka,
+                    yukseklikListesi: sirali,
+                });
+                sessionKaydet(siparisSession);
+
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender, message: mesaj2, countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`📋 Yükseklik sorusu gönderildi (${secilen_marka}) -> ${sender}`);
+                return;
+            } else {
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: `❓ Listeden bir numara yazın ya da marka adını belirtin.\n\n${(session.markaListesi||[]).map((m,i)=>`${i+1}. ${m}`).join('\n')}`,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                return;
+            }
+        }
+
+        // Adım 2 yanıtı: Yükseklik seçildi, şimdi makina listesini sun
+        if (session && session.state === 'awaiting_yukseklik') {
+            const data2 = await fetchAllData();
+            let yukseklik = null;
+
+            // Numara ile seçim (listeden)
+            const secimNo2 = parseInt(msgNorm) - 1;
+            if (!isNaN(secimNo2) && secimNo2 >= 0 && session.yukseklikListesi && session.yukseklikListesi[secimNo2] !== undefined) {
+                yukseklik = session.yukseklikListesi[secimNo2];
+            }
+            // Direkt sayı yazdıysa
+            else {
+                const yMatch = msgNorm.match(/(\d{1,2})/);
+                if (yMatch) yukseklik = parseInt(yMatch[1]);
+            }
+
+            if (yukseklik) {
+                const marka = session.secilenMarka;
+                const eslesenMak = (data2.makinalar || []).filter(r => {
+                    const vals = Object.values(r);
+                    const markaStr = (vals[0] || '').toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    const tipStr = (vals[2] || '');
+                    const yOk = tipStr.includes(yukseklik + 'm') || tipStr.includes(yukseklik + ',') || tipStr.includes(yukseklik + '.') || new RegExp(`\\b${yukseklik}\\s*m`, 'i').test(tipStr);
+                    return markaStr.includes(marka) && yOk;
+                });
+
+                if (eslesenMak.length === 0) {
+                    await axios.post('https://api.fonnte.com/send', {
+                        target: sender,
+                        message: `⚠️ *${marka}* için *${yukseklik} metre* yükseklikte bir model bulunamadı.\n\nFarklı bir yükseklik deneyin ya da 0555 016 16 00'ı arayın.`,
+                        countryCode: '0'
+                    }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                    siparisSession.delete(sender); sessionKaydet(siparisSession);
+                    return;
+                }
+
+                const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                const listeStr = eslesenMak.map((r, i) => {
+                    const vals = Object.values(r);
+                    const parca = [vals[1], vals[2], vals[3], vals[4], vals[5]].filter(v => v && v.toString().trim());
+                    return `${emojiRakam[i]||i+1+'.'} ${parca.join(' | ')}`;
+                }).join('\n');
+
+                const tamMesaj = `*${marka} — ${yukseklik} metre* için lastik seçenekleri:\n\n${listeStr}\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.`;
+
+                siparisSession.set(sender, {
+                    ...session,
+                    state: 'awaiting_model',
+                    modelDetay: eslesenMak.map(r => ({
+                        model:   Object.values(r)[1] || '',
+                        stokAdi: Object.values(r)[6] || Object.values(r)[Object.values(r).length-1] || '',
+                        tip:     Object.values(r)[5] || '',
+                    }))
+                });
+                sessionKaydet(siparisSession);
+
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender, message: tamMesaj, countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`📋 Model listesi gönderildi (${marka} ${yukseklik}m, ${eslesenMak.length} model) -> ${sender}`);
+                return;
+            } else {
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: '❓ Makinenizin çalışma yüksekliğini yazın. Örn: *8* ya da *8 metre*',
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                return;
+            }
+        }
+
         // AŞAMA 2: Müşteri "EVET" veya "HAYIR" dedi (sipariş teklifi bekleniyor)
         if (session && session.state === 'awaiting_order') {
             if (msgNorm === '1' || msgNorm.includes('EVET') || msgNorm.includes('SİPARİŞ VER') || msgNorm.includes('SIPARIS VER')) {
@@ -730,118 +875,114 @@ Lütfen *1* veya *2* yazın.`;
         // Lastik/makine sorusu mu? Tetikleyici kelimeler
         const lastikSorusu = /LAST[Iİ]K|TEKERK|MAKA[SŞ]|PLATFORM|METRE|MAKINA|MACH|TIRES?|WHEEL/i.test(message);
 
-        if ((markaBul || yukseklikBul) && lastikSorusu && data.makinalar && data.makinalar.length > 0) {
-            const filtrele = (liste) => liste.filter(r => {
-                const s = Object.values(r).join(' ').toUpperCase()
-                    .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
-                    .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-                const mOk = markaBul ? s.includes(markaBul) : true;
-                const yOk = yukseklikBul ? s.includes(yukseklikBul[1]+'M') : true;
-                return mOk && yOk;
-            });
+        if (lastikSorusu && data.makinalar && data.makinalar.length > 0) {
 
-            // Önce yeni makina rehberini (619309813) ara
-            let eslesenMak = filtrele(data.makinalar || []);
-
-            // Bulunamazsa fiyat listesinden (1263788777) markayla eşleşen ürünleri getir
-            if (eslesenMak.length === 0) {
-                console.log(`⚠️ Makina rehberinde bulunamadı, fiyat listesinde aranıyor...`);
-                const fiyatEslesen = (data.urunler || []).filter(r => {
+            // ── Hem marka hem yükseklik varsa direkt filtrele (eski davranış) ──
+            if (markaBul && yukseklikBul) {
+                const filtrele = (liste) => liste.filter(r => {
                     const s = Object.values(r).join(' ').toUpperCase()
                         .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
                         .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-                    return markaBul ? s.includes(markaBul) : false;
+                    const mOk = s.includes(markaBul);
+                    const yOk = s.includes(yukseklikBul[1]+'M');
+                    return mOk && yOk;
                 });
 
-                if (fiyatEslesen.length > 0) {
-                    // Sadece Tekerlek Tanımı kolonunu göster — fiyat gösterme
-                    const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-                    const fiyatKolonlar = Object.keys(fiyatEslesen[0]);
-                    console.log('🔍 Fiyat listesi kolonları:', fiyatKolonlar.join(' | '));
-                    // Her zaman ilk kolon = Tekerlek Tanımı
-                    const tekerTanimKol = fiyatKolonlar[0];
+                let eslesenMak = filtrele(data.makinalar || []);
 
-                    const fiyatListeStr = fiyatEslesen.map((r, i) => {
-                        const tanim = r[tekerTanimKol] || '';
-                        return (emojiR[i] || (i+1)+'.') + ' ' + tanim;
+                if (eslesenMak.length > 0) {
+                    const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                    const listeStr = eslesenMak.map((r, i) => {
+                        const vals = Object.values(r);
+                        const parca = [vals[1],vals[2],vals[3],vals[4],vals[5]].filter(v => v && v.toString().trim());
+                        return (emojiRakam[i] || (i+1)+'.') + ' ' + parca.join(' | ');
                     }).join('\n');
 
-                    const fiyatMesaj = `${markaBul} için elimizdeki lastik seçenekleri:\n\n${fiyatListeStr}\n\nHangi lastiği kullanıyorsunuz? Numarasını yazmanız yeterli.`;
+                    const tamMesaj = `*${markaBul} — ${yukseklikBul[1]} metre* için lastik seçenekleri:\n\n${listeStr}\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.`;
 
-                    // Session'a kaydet — state: awaiting_model
-                    const mevcutSes2 = siparisSession.get(sender) || {};
+                    const mevcutSes = siparisSession.get(sender) || {};
                     siparisSession.set(sender, {
-                        ...mevcutSes2,
+                        ...mevcutSes,
                         state: 'awaiting_model',
-                        modelListesi: fiyatEslesen.map(r => r[tekerTanimKol] || ''),
-                        modelDetay: fiyatEslesen.map(r => ({
-                            model:   r[tekerTanimKol] || '',
-                            stokAdi: r[tekerTanimKol] || '',
-                            tip:     '',
+                        modelDetay: eslesenMak.map(r => ({
+                            model:   Object.values(r)[1] || '',
+                            stokAdi: Object.values(r)[6] || Object.values(r)[Object.values(r).length-1] || '',
+                            tip:     Object.values(r)[5] || '',
                         }))
                     });
                     sessionKaydet(siparisSession);
 
                     await axios.post('https://api.fonnte.com/send', {
-                        target: sender,
-                        message: fiyatMesaj,
-                        countryCode: '0'
+                        target: sender, message: tamMesaj, countryCode: '0'
                     }, { headers: { 'Authorization': FONNTE_TOKEN } });
-                    console.log(`📋 Fiyat listesinden gönderildi -> ${sender} (${fiyatEslesen.length} ürün)`);
-                    return;
-                } else {
-                    // İkisinde de yok — yetkiliye yönlendir
-                    await axios.post('https://api.fonnte.com/send', {
-                        target: sender,
-                        message: `Üzgünüm, ${markaBul || 'aradığınız marka'} için sistemimizde uygun lastik bulunamadı. Yetkilimiz en kısa sürede sizinle iletişime geçecek. 📞`,
-                        countryCode: '0'
-                    }, { headers: { 'Authorization': FONNTE_TOKEN } });
-                    console.log(`❌ Eşleşme bulunamadı, yetkiliye yönlendirildi -> ${sender}`);
+                    console.log(`📋 Direkt model listesi gönderildi -> ${sender} (${eslesenMak.length} model)`);
                     return;
                 }
             }
 
-            if (eslesenMak.length > 0) {
-                const kolonlar = Object.keys(eslesenMak[0]);
-                console.log('🔍 Makina kolonları:', kolonlar.join(' | '));
-                console.log('🔍 Örnek satır:', Object.values(eslesenMak[0]).join(' | '));
-
-                // Kolon index'leri: Marka|Model|Makina Tipi|Lastik Ölçüsü Inch|Lastik Ölçüsü Metrik|JantTipi|STOK ADI
-                const emojiRakam = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-                const listeStr = eslesenMak.map((r, i) => {
+            // ── Sadece marka varsa yükseklik sor ──
+            if (markaBul && !yukseklikBul) {
+                const yukseklikler = new Set();
+                (data.makinalar || []).forEach(r => {
                     const vals = Object.values(r);
-                    // Marka(0) | Model(1) | MakinaTipi(2) | LastikInch(3) | LastikMetrik(4) | JantTipi(5) | StokAdi(6)
-                    // Her kolon değerini logla
-                    console.log(`🔍 Satır ${i}: ` + Object.keys(r).map((k,idx) => `[${idx}]${k}=${Object.values(r)[idx]}`).join(' | '));
-                    const parca = [vals[1],vals[2],vals[3],vals[4],vals[5]].filter(v => v && v.toString().trim());
-                    return (emojiRakam[i] || (i+1)+'.') + ' ' + parca.join(' | ');
-                }).join('\n');
+                    const marka = (vals[0] || '').toUpperCase().replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G').replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    if (marka.includes(markaBul)) {
+                        const m = (vals[2] || '').match(/(\d{1,2})[,.]?\d*\s*m/i);
+                        if (m) yukseklikler.add(parseInt(m[1]));
+                    }
+                });
 
-                const baslik = `${markaBul || 'İlgili'} ${yukseklikBul ? yukseklikBul[1]+' metre ' : ''}platform için lastik modellerimiz:\n`;
-                const tamMesaj = baslik + '\n' + listeStr + '\n\nHangi modeli kullanıyorsunuz? Numarasını yazmanız yeterli.';
+                const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+                const sirali = [...yukseklikler].sort((a,b)=>a-b);
+                const yList = sirali.map((y,i) => `${emojiR[i]||i+1+'.'} ${y} metre`).join('\n');
 
-                // Session'a kaydet — state: awaiting_model
                 const mevcutSes = siparisSession.get(sender) || {};
                 siparisSession.set(sender, {
                     ...mevcutSes,
-                    state: 'awaiting_model',
-                    modelListesi: eslesenMak.map(r => Object.values(r)[1]),
-                    modelDetay: eslesenMak.map(r => ({
-                        model:   Object.values(r)[1] || '',
-                        stokAdi: Object.values(r)[6] || Object.values(r)[Object.values(r).length-1] || '',
-                        tip:     Object.values(r)[5] || '',
-                    }))
+                    state: 'awaiting_yukseklik',
+                    secilenMarka: markaBul,
+                    yukseklikListesi: sirali,
                 });
                 sessionKaydet(siparisSession);
 
-                // Direkt Fonnte'ye gönder — Gemini'ye uğrama
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
-                    message: tamMesaj,
+                    message: `*${markaBul}* için makinenizin çalışma yüksekliği nedir?\n\n${yList}\n\nNumarasını yazmanız yeterli.`,
                     countryCode: '0'
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
-                console.log(`📋 Makina listesi direkt gönderildi -> ${sender} (${eslesenMak.length} model)`);
-                return; // Gemini'ye gitme
+                console.log(`📋 Yükseklik sorusu gönderildi (marka biliniyor: ${markaBul}) -> ${sender}`);
+                return;
+            }
+
+            // ── Ne marka ne yükseklik var — kademeli akışı başlat: önce marka sor ──
+            if (!markaBul) {
+                // Makina rehberindeki tüm markaları çıkar
+                const markaSet = new Set();
+                (data.makinalar || []).forEach(r => {
+                    const marka = (Object.values(r)[0] || '').trim().toUpperCase()
+                        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+                        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+                    if (marka) markaSet.add(marka);
+                });
+                const markaListesi = [...markaSet].sort();
+                const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','1️⃣1️⃣','1️⃣2️⃣','1️⃣3️⃣','1️⃣4️⃣','1️⃣5️⃣'];
+                const markaStr = markaListesi.map((m,i) => `${emojiR[i]||i+1+'.'} ${m}`).join('\n');
+
+                const mevcutSes = siparisSession.get(sender) || {};
+                siparisSession.set(sender, {
+                    ...mevcutSes,
+                    state: 'awaiting_marka',
+                    markaListesi,
+                });
+                sessionKaydet(siparisSession);
+
+                await axios.post('https://api.fonnte.com/send', {
+                    target: sender,
+                    message: `Makinenizin markasını öğrenebilir miyim? 🔧\n\n${markaStr}\n\nNumarasını yazmanız yeterli. Ya da marka adını doğrudan yazabilirsiniz.`,
+                    countryCode: '0'
+                }, { headers: { 'Authorization': FONNTE_TOKEN } });
+                console.log(`📋 Marka sorusu gönderildi -> ${sender}`);
+                return;
             }
         }
         // ═══════════════════════════════════════════════════════
