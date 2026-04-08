@@ -465,8 +465,7 @@ const MENU_KAYITLI = `Size nasıl yardımcı olabilirim? 😊
 4️⃣ Şikayet / Öneri bildirimi
 5️⃣ Teslim alınmayan jant bilgilendirme
 6️⃣ Açık sipariş sorgulama
-7️⃣ Teknik bilgi öğrenme
-8️⃣ Diğer
+7️⃣ Ödeme & Fatura Bilgisi
 
 Lütfen numarasını yazın.`;
 
@@ -645,18 +644,14 @@ app.post('/webhook', async (req, res) => {
                         await whatsappGonder(sender, '🔍 Açık siparişlerinizi sorguluyorum...');
                         message = 'açık siparişlerim hangileri kaç gündür bekliyor';
                         break;
-                    case 7: // Teknik bilgi
-                        siparisSession.set(sender, { ...session, state: 'awaiting_teknik' });
+                    case 7: // Ödeme & Fatura Bilgisi
+                        siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
                         sessionKaydet(siparisSession);
-                        await whatsappGonder(sender, '🔧 Hangi konuda teknik bilgi almak istiyorsunuz?\n\nSorunuzu yazabilirsiniz:');
-                        return;
-                    case 8: // Diğer
-                        siparisSession.set(sender, { ...session, state: 'awaiting_diger' });
-                        sessionKaydet(siparisSession);
-                        await whatsappGonder(sender, 'Talebinizi veya sorunuzu yazabilirsiniz, size yardımcı olmaya çalışacağım. 😊');
-                        return;
+                        await whatsappGonder(sender, '🔍 Ödeme ve fatura bilgilerinizi sorguluyorum...');
+                        message = 'ödeme fatura işlemlerim ne durumda son hareketlerim neler';
+                        break;
                     default:
-                        await whatsappGonder(sender, `❓ Lütfen 1-8 arasında bir numara yazın.\n\n${MENU_KAYITLI}`);
+                        await whatsappGonder(sender, `❓ Lütfen 1-7 arasında bir numara yazın.\n\n${MENU_KAYITLI}`);
                         return;
                 }
             } else {
@@ -705,20 +700,6 @@ app.post('/webhook', async (req, res) => {
             siparisSession.set(sender, { ...session, state: 'awaiting_menu_trigger' });
             sessionKaydet(siparisSession);
             return;
-        }
-
-        // ─── TEKNİK BİLGİ DOĞRUDAN SORUSU ───
-        if (session && session.state === 'awaiting_teknik') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
-            sessionKaydet(siparisSession);
-            // Gemini'ye düş — teknik soru olarak işlenir, yanıt sonrası menü dönecek
-        }
-
-        // ─── DİĞER AKIŞI ───
-        if (session && session.state === 'awaiting_diger') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
-            sessionKaydet(siparisSession);
-            // Gemini'ye düş — serbest soru, yanıt sonrası menü dönecek
         }
 
         // ═══════════════════════════════════════════════════════════════
