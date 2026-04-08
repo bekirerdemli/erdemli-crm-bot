@@ -498,6 +498,17 @@ app.post('/webhook', async (req, res) => {
                     return `$${str} USD`;
                 };
 
+                // %5 RobERD iskontosu uygula
+                const ISKONTO_ORAN = 0.05;
+                const iskontoluFiyat = (fiyatStr) => {
+                    if (!fiyatStr) return null;
+                    const sayi = parseFloat(fiyatStr.replace(/[^0-9.,]/g, '').replace(',', '.'));
+                    if (isNaN(sayi)) return null;
+                    const indirimli = (sayi * (1 - ISKONTO_ORAN)).toFixed(2);
+                    return `$${indirimli} USD`;
+                };
+                const iskontoBilgisi = `\n\n🎁 *RobERD'den özel fiyat:* Yukarıdaki fiyata WhatsApp üzerinden sipariş verdiğiniz için *%5 indirim* uygulanmaktadır.`;
+
                 let kaplamaFiyat = null, sifirJant = null, tekerTanim = stokAdi;
                 if (fiyatSatiri) {
                     const kolonlar = Object.keys(fiyatSatiri);
@@ -541,38 +552,46 @@ app.post('/webhook', async (req, res) => {
                 let fiyatMesaj, siparisSorusuGonder = true;
 
                 if (eskiFiyat) {
-                    // ✅ Kayıtlı müşteri + daha önce bu üründen almış → özel fiyatını göster
-                    fiyatMesaj   = `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 *${eskiFiyat}*\n\n_(Geçmiş siparişlerinize göre hesaplanmıştır)_`;
-                    kaplamaFiyat = eskiFiyat;
+                    // ✅ Kayıtlı müşteri + daha önce bu üründen almış → önceki fiyat + %5 indirimli
+                    const eskiIndirimli = iskontoluFiyat(eskiFiyat);
+                    fiyatMesaj = `*${tekerTanim}* için daha önce anlaştığımız fiyat:\n\n💰 Liste fiyatı: ~~${eskiFiyat}~~\n🎁 *RobERD indirimi (%5):* *${eskiIndirimli}*\n\n_WhatsApp üzerinden sipariş verdiğiniz için %5 indirim uygulanmaktadır._`;
+                    kaplamaFiyat = eskiIndirimli || eskiFiyat;
                     sifirJant    = null;
 
                 } else if (kayitliMusteri && fiyatSatiri) {
-                    // ⚡ Kayıtlı müşteri ama bu üründen hiç almamış → liste fiyatı + yönetici bildirimi
-                    fiyatMesaj = `*${tekerTanim}* için liste fiyatımız:\n\n${
+                    // ⚡ Kayıtlı müşteri ama bu üründen hiç almamış → liste + %5 indirim + yönetici bildirimi
+                    const kapIndirimli  = iskontoluFiyat(kaplamaFiyat);
+                    const sifirIndirimli = iskontoluFiyat(sifirJant);
+                    fiyatMesaj = `*${tekerTanim}* için fiyatlarımız:\n\n${
                         sifirJant
-                        ? `🔧 *Kaplama:* ${kaplamaFiyat}\n✨ *Sıfır Jant:* ${sifirJant}`
-                        : `💰 ${kaplamaFiyat}`
-                    }\n\nSiz değerli müşterimiz olduğunuz için size özel indirimli fiyat sunmak istiyoruz. ✨ Mesajınızı yöneticimize iletiyorum, en kısa sürede sizinle iletişime geçilecek. 📲`;
+                        ? `🔧 *Kaplama:* ~~${kaplamaFiyat}~~ → *${kapIndirimli}*\n✨ *Sıfır Jant:* ~~${sifirJant}~~ → *${sifirIndirimli}*`
+                        : `💰 ~~${kaplamaFiyat}~~ → *${kapIndirimli}*`
+                    }\n\n🎁 *RobERD indirimi (%5) uygulanmıştır.*\n\nAyrıca siz değerli müşterimiz olduğunuz için ek indirim seçenekleri için mesajınızı yöneticimize iletiyorum. 📲`;
                     siparisSorusuGonder = false;
 
                     // Gruba bildirim
                     if (GRUP_ID) {
                         const listeFiyatStr = sifirJant
-                            ? `Kaplama: ${kaplamaFiyat} | Sıfır Jant: ${sifirJant}`
-                            : kaplamaFiyat || '—';
+                            ? `Kaplama: ${kaplamaFiyat} (indirimli: ${iskontoluFiyat(kaplamaFiyat)}) | Sıfır Jant: ${sifirJant} (indirimli: ${iskontoluFiyat(sifirJant)})`
+                            : `${kaplamaFiyat} (indirimli: ${iskontoluFiyat(kaplamaFiyat)})`;
                         await axios.post('https://api.fonnte.com/send', {
                             target: GRUP_ID,
-                            message: `📢 *Fiyat Talebi — Yönetici Onayı*\n\n👤 Müşteri: ${cariAdi2}\n📞 Tel: +${sender}\n📦 Ürün: ${tekerTanim}\n💰 Liste Fiyatı: ${listeFiyatStr}\n\n_Müşteri bu üründen daha önce almamış. İndirimli fiyat için onay bekleniyor._`,
+                            message: `📢 *Fiyat Talebi — Yönetici Onayı*\n\n👤 Müşteri: ${cariAdi2}\n📞 Tel: +${sender}\n📦 Ürün: ${tekerTanim}\n💰 Fiyat: ${listeFiyatStr}\n\n_Müşteri bu üründen daha önce almamış. Ek indirim için onay bekleniyor._`,
                             countryCode: '0'
                         }, { headers: { 'Authorization': FONNTE_TOKEN } });
                         console.log(`📢 Yönetici bildirimi gönderildi -> ${GRUP_ID}`);
                     }
 
                 } else if (fiyatSatiri) {
-                    // 🔓 Kayıtsız müşteri → sadece liste fiyatı
+                    // 🔓 Kayıtsız müşteri → liste fiyatı + %5 RobERD indirimi
+                    const kapIndirimli   = iskontoluFiyat(kaplamaFiyat);
+                    const sifirIndirimli = iskontoluFiyat(sifirJant);
                     fiyatMesaj = sifirJant
-                        ? `*${tekerTanim}* fiyatlarımız:\n\n🔧 *Kaplama* (müşteri kendi jantını getirir): ${kaplamaFiyat}\n✨ *Sıfır Jant* (jant dahil): ${sifirJant}`
-                        : `*${tekerTanim}* fiyatımız: ${kaplamaFiyat || 'Belirtilmemiş'}`;
+                        ? `*${tekerTanim}* fiyatlarımız:\n\n🔧 *Kaplama* (müşteri kendi jantını getirir):\n   ~~${kaplamaFiyat}~~ → *${kapIndirimli}*\n\n✨ *Sıfır Jant* (jant dahil):\n   ~~${sifirJant}~~ → *${sifirIndirimli}*${iskontoBilgisi}`
+                        : `*${tekerTanim}* fiyatımız:\n\n💰 ~~${kaplamaFiyat}~~ → *${kapIndirimli}*${iskontoBilgisi}`;
+                    // İskontolu fiyatı sipariş akışına aktar
+                    kaplamaFiyat = kapIndirimli || kaplamaFiyat;
+                    sifirJant    = sifirIndirimli || sifirJant;
 
                 } else {
                     // ❌ Fiyat listesinde yok → Gemini'ye yönlendir
@@ -1305,6 +1324,7 @@ ${(() => {
 4. MÜŞTERİYE ÖZEL sorularda (sipariş, bakiye, fiyat) YALNIZCA bu müşterinin verilerini kullan. Başka firma verisi ASLA paylaşma.
 5. Borç/bakiye sorusunda: Toplam Bakiye, Vadesi Geçmiş Bakiye ve Vade Gün bilgilerini açıkça belirt.
 5b. Fiyat sorusunda: Önce müşteriye özel "Anlaşılan Fiyat" sütununa bak. Yoksa fiyat listesindeki "kaplama" ve "sıfır jant" fiyatlarını AYRI AYRI göster. Her zaman USD birimi ile belirt. Örn: Kaplama: $65 USD | Sıfır Jant: $85 USD. Kaplama = müşteri kendi jantını getirir. Sıfır Jant = jant dahil fiyat.
+5c. İSKONTO KURALI: Her fiyat gösteriminde mutlaka şunu belirt: "RobERD üzerinden sipariş verdiğiniz için liste fiyatına %5 indirim uygulanmaktadır." Liste fiyatını ve %5 indirimli fiyatı AYRI AYRI yaz. Örn: Liste: $65 USD → RobERD fiyatı: $61.75 USD (%5 indirimli).
 6. Sipariş sorusunda: Sipariş adeti, teslim edilen, kalan ve anlaşılan fiyatı belirt.
 7. Açık sipariş sorusunda: Kaç gündür beklediğini de söyle.
 8. Polyfill/dolum sorusunda: Polyfill Arama Sonucunu kullan, ölçü formatı farklı olsa bile (x, -, /, virgül, nokta) aynı ölçü olarak değerlendir.
