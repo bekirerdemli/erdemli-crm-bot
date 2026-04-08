@@ -583,26 +583,28 @@ app.post('/webhook', async (req, res) => {
             const secim = parseInt(message.trim());
             const kayitli = session.kayitli;
 
+            // Sayı değilse menüyü tekrar göster
+            if (isNaN(secim)) {
+                const menu = kayitli ? MENU_KAYITLI : MENU_YENI;
+                await whatsappGonder(sender, `❓ Lütfen menüden bir numara seçin:\n\n${menu}`);
+                return;
+            }
+
             if (kayitli) {
                 // KAYITLI MÜŞTERİ MENÜSÜ
                 switch (secim) {
                     case 1: // Borç/Bakiye
-                        siparisSession.set(sender, { ...session, state: null });
+                        siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '🔍 Bakiye bilginizi sorguluyorum...');
                         message = 'bakiye borcum ne kadar';
                         break;
                     case 2: // Lastik fiyatı
-                        siparisSession.set(sender, { ...session, state: null });
-                        sessionKaydet(siparisSession);
-                        // Lastik akışını başlat
                         await whatsappGonder(sender, 'Makinenizin markasını öğrenebilir miyim? 🔧\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)');
                         siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
                         sessionKaydet(siparisSession);
                         return;
                     case 3: // Sipariş verme
-                        siparisSession.set(sender, { ...session, state: null });
-                        sessionKaydet(siparisSession);
                         await whatsappGonder(sender, 'Sipariş vermek için önce makinenizin markasını öğrenelim 🔧\n\nMarka adını yazmanız yeterli. (Örn: Genie, Dingli, JLG...)');
                         siparisSession.set(sender, { ...session, state: 'awaiting_marka', markaListesi: null });
                         sessionKaydet(siparisSession);
@@ -612,14 +614,14 @@ app.post('/webhook', async (req, res) => {
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '📝 Şikayet veya önerinizi yazabilirsiniz, yöneticimize ileteceğim:');
                         return;
-                    case 5: // Teslim alınmayan jant bilgilendirme
-                        siparisSession.set(sender, { ...session, state: null });
+                    case 5: // Teslim alınmayan jant
+                        siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '🔍 Teslim alınmayan jant bilgilerinizi sorguluyorum...');
                         message = 'teslim alınmayan eksik jantlarım hangileri';
                         break;
                     case 6: // Açık sipariş
-                        siparisSession.set(sender, { ...session, state: null });
+                        siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '🔍 Açık siparişlerinizi sorguluyorum...');
                         message = 'açık siparişlerim hangileri kaç gündür bekliyor';
@@ -630,7 +632,7 @@ app.post('/webhook', async (req, res) => {
                         await whatsappGonder(sender, '🔧 Hangi konuda teknik bilgi almak istiyorsunuz?\n\nSorunuzu yazabilirsiniz:');
                         return;
                     case 8: // Diğer
-                        siparisSession.set(sender, { ...session, state: null });
+                        siparisSession.set(sender, { ...session, state: 'awaiting_diger' });
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, 'Talebinizi veya sorunuzu yazabilirsiniz, size yardımcı olmaya çalışacağım. 😊');
                         return;
@@ -665,21 +667,32 @@ app.post('/webhook', async (req, res) => {
 
         // ─── ŞİKAYET AKIŞI ───
         if (session && session.state === 'awaiting_sikayet') {
-            siparisSession.delete(sender); sessionKaydet(siparisSession);
+            siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
+            sessionKaydet(siparisSession);
             if (GRUP_ID) {
                 await whatsappGonder(GRUP_ID,
                     `📣 *Şikayet / Öneri Bildirimi*\n\n👤 Müşteri: ${session.cariAdi || 'Bilinmeyen'}\n📞 Tel: +${sender}\n\n💬 Mesaj:\n${message}`
                 );
             }
             await whatsappGonder(sender, '✅ Şikayet / öneriniz alındı. Yöneticimize iletildi, en kısa sürede sizinle iletişime geçilecek. Teşekkürler! 🙏');
+            setTimeout(async () => {
+                await whatsappGonder(sender, `\n─────────────────\n${MENU_KAYITLI}`);
+            }, 1000);
             return;
         }
 
         // ─── TEKNİK BİLGİ DOĞRUDAN SORUSU ───
         if (session && session.state === 'awaiting_teknik') {
-            siparisSession.set(sender, { ...session, state: null });
+            siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
             sessionKaydet(siparisSession);
-            // Gemini'ye düş — teknik soru olarak işlenir
+            // Gemini'ye düş — teknik soru olarak işlenir, yanıt sonrası menü dönecek
+        }
+
+        // ─── DİĞER AKIŞI ───
+        if (session && session.state === 'awaiting_diger') {
+            siparisSession.set(sender, { ...session, state: 'awaiting_menu' });
+            sessionKaydet(siparisSession);
+            // Gemini'ye düş — serbest soru, yanıt sonrası menü dönecek
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -1686,7 +1699,6 @@ EŞLEŞTIRME KURALI:
                 ciftOpsiyon: bilgi.ciftOpsiyon || false,
                 timestamp:   Date.now(),
             }); sessionKaydet(siparisSession);
-            // Kısa bir gecikme ile sipariş sorusunu gönder
             setTimeout(async () => {
                 await axios.post('https://api.fonnte.com/send', {
                     target: sender,
@@ -1695,6 +1707,15 @@ EŞLEŞTIRME KURALI:
                 }, { headers: { 'Authorization': FONNTE_TOKEN } });
                 console.log(`🛒 Sipariş teklifi gönderildi -> ${sender} | Ürün: ${bilgi.urunAdi} | Fiyat: ${bilgi.fiyat || bilgi.kaplamaFiyat}`);
             }, 1500);
+        } else {
+            // Fiyat teklifi yoksa — state awaiting_menu ise menüyü tekrar göster
+            const sessonrasi = siparisSession.get(sender);
+            if (sessonrasi && sessonrasi.state === 'awaiting_menu' && sessonrasi.kayitli !== undefined) {
+                setTimeout(async () => {
+                    const menu = sessonrasi.kayitli ? MENU_KAYITLI : MENU_YENI;
+                    await whatsappGonder(sender, `\n─────────────────\n${menu}`);
+                }, 1200);
+            }
         }
 
     } catch (error) {
