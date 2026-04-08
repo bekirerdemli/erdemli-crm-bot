@@ -308,7 +308,7 @@ function formatMakinaSatiri(emoji, model, makinaTipi, lastikInch, lastikMetrik, 
     return `${emoji} ${ustSatir}\n   ${altSatir}`;
 }
 
-
+function musteriFiltrele(data, cariAdi) {
     if (cariAdi === 'Bilinmeyen Musteri') return {};
     const cu = cariAdi.toUpperCase();
 
