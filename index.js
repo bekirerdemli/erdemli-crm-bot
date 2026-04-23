@@ -156,17 +156,36 @@ function icdasMi(cariAdi) {
     return eslesti;
 }
 
-async function icdasVeriCek(section = 'all', q = null, limit = 100) {
+async function icdasVeriCek(section = 'all', q = null, limit = 500) {
     try {
         const url = new URL(ICDAS_API);
         url.searchParams.set('section', section);
         url.searchParams.set('limit', String(limit));
         if (q) url.searchParams.set('q', q);
-        const res = await axios.get(url.toString(), { timeout: 8000 });
+        const res = await axios.get(url.toString(), { timeout: 10000 });
         return res.data;
     } catch(e) {
         console.error('İçdaş API hatası:', e.message);
         return null;
+    }
+}
+
+// Sipariş satır detaylarını ayrı endpoint'ten çek
+async function icdasSiparisDetay(siparisId) {
+    try {
+        const url = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}&format=json`;
+        const res = await axios.get(url, { timeout: 8000 });
+        return res.data;
+    } catch(e) {
+        // JSON yoksa ham veri dene
+        try {
+            const url2 = `http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=siparis&q=${siparisId}`;
+            const res2 = await axios.get(url2, { timeout: 8000 });
+            return res2.data;
+        } catch(e2) {
+            console.error('Sipariş detay hatası:', e2.message);
+            return null;
+        }
     }
 }
 
@@ -186,13 +205,28 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         // Tekil kod araması — tüm modüllerde arar
         veriArama = await icdasVeriCek('all', kodMatch[0]);
     } else if (/SIPARIS|SIPARI|LASTIK|TEKER|ADET|KAC TAN|KACT|\d{3,4}[-\/]\d{2,3}/.test(msgU)) {
-        // Sipariş sorusu — sipariş + irsaliye + stok + dolum hepsini çek
+        // Sipariş sorusu — hepsini paralel çek
         [veriSiparis, veriIrsaliye, veriStok, veriDolum] = await Promise.all([
             icdasVeriCek('siparis', null, 500),
-            icdasVeriCek('irsaliye', null, 500),  // Giriş/çıkış hareketleri burada
-            icdasVeriCek('stok', null, 500),       // Stok durumu burada
+            icdasVeriCek('irsaliye', null, 500),
+            icdasVeriCek('stok', null, 500),
             icdasVeriCek('dolum', null, 500)
         ]);
+        // Açık siparişlerin ID'leriyle detay satırlarını da çek
+        const acikSiparisler = veriSiparis?.data?.siparis?.listeler?.acik || [];
+        const tumSiparisler = [
+            ...acikSiparisler,
+            ...(veriSiparis?.data?.siparis?.listeler?.sonTamamlanan || [])
+        ];
+        if (tumSiparisler.length > 0) {
+            // İlk 3 siparişin detayını çek (paralel)
+            const detayPromises = tumSiparisler.slice(0, 3).map(s => 
+                icdasSiparisDetay(s.Id).catch(() => null)
+            );
+            const detaylar = await Promise.all(detayPromises);
+            veriSiparis._detaylar = detaylar.filter(Boolean);
+            console.log(`📋 ${detaylar.filter(Boolean).length} sipariş detayı çekildi`);
+        }
     } else if (/IRSALIYE|SEVK|TESLIMAT|GELEN|GIDEN/.test(msgU)) {
         [veriIrsaliye, veriDolum] = await Promise.all([
             icdasVeriCek('irsaliye'),
@@ -259,6 +293,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             siparisOzet: veriSiparis?.data?.siparis?.ozet || null,
             siparisAcik: siparisListesi?.acik || [],
             siparissOnTamamlanan: siparisListesi?.sonTamamlanan || [],
+            siparisDetaylar: veriSiparis?._detaylar || [],  // Her siparişin ürün satırları
 
             // Stok: ebat bazlı giriş/çıkış/kalan (PDF'deki "Gelen Stok Özeti" buradan)
             stokEbatDurum: stokEbatDurum,
@@ -292,7 +327,8 @@ SİSTEM VERİSİ:
 ${veriBlok}
 
 VERİ AÇIKLAMALARI:
-- siparisAcik[] → Açık siparişler. Alanlar: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen, SatirSayisi. Kalan = ToplamMiktar - TeslimAlinan
+- siparisAcik[] → Açık siparişler. Alanlar: SiparisNo, Id, ToplamMiktar, TeslimAlinan, SevkEdilen, SatirSayisi. Kalan = ToplamMiktar - TeslimAlinan
+- siparisDetaylar[] → Her siparişin ürün satır detayları. İçinde UrunAdi/StokAdi, SiparisMiktari, TeslimAlinan, Kalan gibi alanlar olabilir — EBAT BAZLI MİKTAR BURADAN OKUNUR
 - stokEbatDurum → Ebat bazlı stok durumu: {StokAdı: {giris, cikis, kalan}}. PDF'deki "Gelen Stok Özeti" buradan okunur
 - stokTumListe[] → Tüm stok kartları: Kod, StokIsmi, Giris, Cikis, Kalan
 - irsaliyeGiden[] → Gönderilen irsaliyeler (sevkiyatlar). Sipariş bazlı gönderilen miktarlar burada
