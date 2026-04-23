@@ -67,6 +67,12 @@ app.use((req, res, next) => {
 
 app.get('/webhook', (req, res) => res.status(200).send("Webhook aktif ve calisiyor"));
 
+// PDF dosyalarını servis et — Fonnte bu URL'den PDF'i indirir
+const PDF_DIR = '/tmp/kaulas_pdfs';
+const fsExtra = require('fs');
+if (!fsExtra.existsSync(PDF_DIR)) fsExtra.mkdirSync(PDF_DIR, { recursive: true });
+app.use('/pdf', require('express').static(PDF_DIR));
+
 app.get('/modeller', async (req, res) => {
     try {
         const r = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
@@ -322,243 +328,47 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
                 const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
 
-                // ── Dolum: bu siparişe ait kayıtlar (SiparisNo ile filtrelenmiş) ──
-                const sipDolumlar = detay.sipDolumlar || [];
-                const stokMap = detay.stokMap || {};
-
-                // Ürün adını bul: EbatKodu stok kodu olabilir, stokMap'ten çevir
-                const urunAdi = (d) => {
-                    const kod = (d.EbatKodu || '').trim();
-                    const ad  = (d.EbatAdi  || '').trim();
-                    // Stok map'te varsa gerçek adı kullan
-                    if (stokMap[kod]) return stokMap[kod];
-                    // Yoksa EbatAdi'yi kullan, o da yoksa kodu göster
-                    return ad || kod || 'Bilinmeyen';
-                };
-
-                // Ebat bazlı sayım — teslim alınan (tamam) ve devam eden
-                const sipEbat = {}; // { urunAdi: { tamam, devam } }
-                sipDolumlar.forEach(d => {
-                    const ad = urunAdi(d);
-                    if (!sipEbat[ad]) sipEbat[ad] = { tamam: 0, devam: 0 };
-                    if (d.DolumDurumu === 5 || d.DurumEtiket === 'Dolum Tamamlandı') sipEbat[ad].tamam++;
-                    else sipEbat[ad].devam++;
-                });
-
-                // Teslim alınan toplam ebat bazında
-                const teslimAlinanEbat = {}; // { urunAdi: adet }
-                Object.entries(sipEbat).forEach(([ad, c]) => { teslimAlinanEbat[ad] = c.tamam; });
-
-                // Sipariş satır detayları — HTML parse'dan geliyor
+                // Sipariş satır detayları — özet için kullan
                 const satirlar = detay.satirlar || [];
-                const siparisEbat    = {}; // { urunAdi: sipMiktar }
-                const teslimAlinanEB = {}; // { urunAdi: teslimAlinan }
-                const teslimEdilenEB = {}; // { urunAdi: gonderilen }
-                const kalanEB        = {}; // { urunAdi: kalan }
-                
-                if (satirlar.length > 0) {
-                    satirlar.forEach(s => {
-                        siparisEbat[s.urunAdi]    = s.sipMiktar;
-                        teslimAlinanEB[s.urunAdi] = s.teslimAlinan;
-                        teslimEdilenEB[s.urunAdi] = s.gonderilen;
-                        kalanEB[s.urunAdi]         = s.kalanMiktar;
-                    });
-                } else {
-                    // Fallback: dolum listesinden hesapla
-                    Object.entries(sipEbat).forEach(([ad, c]) => {
-                        siparisEbat[ad]    = c.tamam + c.devam;
-                        teslimAlinanEB[ad] = c.tamam;
-                        teslimEdilenEB[ad] = c.tamam;
-                        kalanEB[ad]        = c.devam;
-                    });
-                }
-
-                // ── Sadece TEKERLEK içeren satırları filtrele (jant, segman vb. dışarıda) ──
-                function tekerlerMi(ad) {
-                    return (ad||'').toUpperCase().includes('TEKERLEK');
-                }
-
-                // HTML/JSON'dan gelen irsaliye numaraları (KLI... gibi)
-                const irsNolarListesi = detay.irsNolar || [];
-
-                // İrsaliye listesinden bu siparişe ait olanları eşleştir
-                // Önce IrsaliyeNo ile direkt eşleştir, sonra Aciklama ile dene
-                const tumGelen = detay.irsaliye?.data?.irsaliye?.listeler?.gelen || [];
-                const tumGiden = detay.irsaliye?.data?.irsaliye?.listeler?.giden || [];
-
-                const irsGelen = tumGelen.filter(i => {
-                    const no = (i.IrsaliyeNo || '');
-                    return irsNolarListesi.includes(no) ||
-                           (i.Aciklama||'').includes(sipNo) ||
-                           (i.SiparisNo||'') === sipNo;
+                const siparisEbat = {};
+                const kalanEB = {};
+                satirlar.forEach(s => {
+                    siparisEbat[s.urunAdi] = s.sipMiktar;
+                    kalanEB[s.urunAdi] = s.kalanMiktar;
                 });
-                const irsGiden = tumGiden.filter(i => {
-                    const no = (i.IrsaliyeNo || '');
-                    return irsNolarListesi.includes(no) ||
-                           (i.Aciklama||'').includes(sipNo) ||
-                           (i.SiparisNo||'') === sipNo;
-                });
+                function tekerlerMi(ad) { return (ad||'').toUpperCase().includes('TEKERLEK'); }
 
-                // ── Mesaj oluştur ──
-                let dm = `📋 *Sipariş Detayı*\n\n`;
-                dm += `*Sipariş No:* ${sipNo}\n`;
-                dm += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
-                dm += `*Durum:* ${bulunan.DurumEtiket}\n`;
+                // ── PDF indir ve WhatsApp'a gönder ──
+                // Sunucunun dış URL'ini çek (Render'da PORT env ile birlikte BASE_URL env'i tanımlayın)
+                const BASE_URL = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+                const pdfSrcUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${sipId}`;
+                const pdfFileName = `siparis_${sipNo}_${Date.now()}.pdf`;
+                const pdfLocalPath = path.join(PDF_DIR, pdfFileName);
+                const pdfPublicUrl = `${BASE_URL}/pdf/${pdfFileName}`;
 
-                // Sadece TEKERLEK olan ürünleri al
+                // PDF'i kaynaktan indir ve locale kaydet
+                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 15000 });
+                fs.writeFileSync(pdfLocalPath, Buffer.from(pdfRes.data));
+                console.log(`📄 PDF kaydedildi: ${pdfLocalPath} (${pdfRes.data.byteLength} byte)`);
+
+                // Kısa özet mesaj
                 const tumUrunler2 = Object.keys(siparisEbat).filter(tekerlerMi);
-
-                // 1) Sipariş Edilen
-                dm += `\n📋 *Sipariş Edilen:*\n`;
+                let ozet = `📋 *Sipariş No:* ${sipNo}\n`;
+                ozet += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)} | *Durum:* ${bulunan.DurumEtiket}\n`;
                 if (tumUrunler2.length) {
-                    tumUrunler2.forEach(ad => { dm += `• ${ad} - ${siparisEbat[ad]} Adet\n`; });
-                } else {
-                    dm += `• Toplam: ${bulunan.ToplamMiktar} Adet\n`;
+                    const kalanTekerlek = Object.entries(kalanEB).filter(([ad]) => tekerlerMi(ad));
+                    ozet += `*Kalan:* ${kalanTekerlek.map(([ad, a]) => `${ad.replace('(YENİ)','').trim()} ${a} adet`).join(', ')}\n`;
                 }
+                ozet += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
 
-                // 2) Teslim Alınan
-                dm += `\n📥 *Teslim Alınan:*\n`;
-                const teslimAlinanTekerlek = Object.entries(teslimAlinanEB).filter(([ad]) => tekerlerMi(ad));
-                if (teslimAlinanTekerlek.length) {
-                    teslimAlinanTekerlek.forEach(([ad, adet]) => { dm += `• ${ad} - ${adet} Adet\n`; });
-                } else {
-                    dm += `• ${bulunan.TeslimAlinan} Adet\n`;
-                }
+                // Fonnte'ye URL ile gönder
+                await whatsappPdfGonder(sender, pdfPublicUrl, ozet);
+                console.log(`📤 PDF WhatsApp'a gönderildi -> ${sender} | URL: ${pdfPublicUrl}`);
 
-                // 3) Teslim Edilen
-                dm += `\n📤 *Teslim Edilen:*\n`;
-                const teslimEdilenTekerlek = Object.entries(teslimEdilenEB).filter(([ad]) => tekerlerMi(ad));
-                if (teslimEdilenTekerlek.length) {
-                    teslimEdilenTekerlek.forEach(([ad, adet]) => { dm += `• ${ad} - ${adet} Adet\n`; });
-                } else {
-                    dm += `• ${bulunan.SevkEdilen} Adet\n`;
-                }
-
-                // 4) Kalan Sipariş
-                dm += `\n⏳ *Kalan Sipariş:*\n`;
-                const kalanTekerlek = Object.entries(kalanEB).filter(([ad]) => tekerlerMi(ad));
-                if (kalanTekerlek.length) {
-                    kalanTekerlek.forEach(([ad, adet]) => { if (adet > 0) dm += `• ${ad} - ${adet} Adet\n`; });
-                } else if (kalan > 0) {
-                    dm += `• ${kalan} Adet\n`;
-                } else {
-                    dm += `• Yok\n`;
-                }
-
-                // ── İrsaliye ürün kırılımı helper ──
-                // Dolum verilerinden irsaliye bazlı ürün sayısını hesapla
-                // Her dolum kaydında IrsaliyeNo varsa kullan, yoksa HTML'deki irsNolar listesiyle eşleştir
-                const irsaliyeUrunMap = {}; // { IrsaliyeNo: { urunAdi: adet } }
-                // Önce tüm dolumları (bu sipariş + diğerleri) irsaliye bazlı grupla
-                const tumDolumlar = [
-                    ...(detay.irsaliye?.data?.dolum?.listeler?.devamEden || []),
-                    ...(detay.irsaliye?.data?.dolum?.listeler?.sonTamamlanan || [])
-                ];
-                // Dolum verisi irsaliyeye bağlıysa kullan
-                sipDolumlar.forEach(d => {
-                    const irsNo = (d.IrsaliyeNo || d.irsaliyeNo || '').trim();
-                    const ad = urunAdi(d);
-                    if (irsNo && ad && tekerlerMi(ad)) {
-                        if (!irsaliyeUrunMap[irsNo]) irsaliyeUrunMap[irsNo] = {};
-                        irsaliyeUrunMap[irsNo][ad] = (irsaliyeUrunMap[irsNo][ad] || 0) + 1;
-                    }
-                });
-
-                // İrsaliye detay satırlarını API'den çek (her irsaliye için)
-                // api_kaupan_info.php?section=irsaliye_satirlar&id=... veya &irsaliye_no=...
-                const irsDetayMap = {}; // { IrsaliyeNo: [ {urunAdi, miktar} ] }
-                const hedefIrsNolar = [...new Set([
-                    ...irsGelen.map(i => i.IrsaliyeNo),
-                    ...irsGiden.map(i => i.IrsaliyeNo),
-                    ...irsNolarListesi
-                ])].filter(Boolean);
-
-                if (hedefIrsNolar.length > 0) {
-                    const irsDetayPromises = hedefIrsNolar.map(no =>
-                        Promise.allSettled([
-                            axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye_satirlar&id=${no}`, { timeout: 8000 }),
-                            axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye&irsaliye_no=${no}`, { timeout: 8000 }),
-                            axios.get(`http://84.44.77.42:3939/kaulas/irsaliye_detay_pdf.php?Id=${no}&json=1`, { timeout: 8000 }),
-                        ])
-                    );
-                    const irsDetayResults = await Promise.all(irsDetayPromises);
-                    hedefIrsNolar.forEach((no, idx) => {
-                        const results = irsDetayResults[idx];
-                        for (const res of results) {
-                            if (res.status !== 'fulfilled') continue;
-                            const d = res.value.data;
-                            // Farklı yapıları dene
-                            const satirlar = d?.satirlar || d?.data?.satirlar || d?.items ||
-                                d?.data?.items || d?.urunler || d?.data?.urunler || null;
-                            if (Array.isArray(satirlar) && satirlar.length > 0) {
-                                const tekerSatirlar = satirlar
-                                    .map(s => ({
-                                        urunAdi: (s.UrunAdi || s.urunAdi || s.StokAdi || s.stokAdi || s.Aciklama || '').trim(),
-                                        miktar: parseFloat((s.Miktar || s.miktar || s.Adet || s.adet || '0').toString().replace(',', '.')) || 0
-                                    }))
-                                    .filter(s => s.urunAdi && s.miktar > 0 && tekerlerMi(s.urunAdi));
-                                if (tekerSatirlar.length > 0) {
-                                    irsDetayMap[no] = tekerSatirlar;
-                                    break;
-                                }
-                            }
-                        }
-                        // API'den gelmezse dolum verisinden türet
-                        if (!irsDetayMap[no] && irsaliyeUrunMap[no]) {
-                            irsDetayMap[no] = Object.entries(irsaliyeUrunMap[no])
-                                .map(([urunAdi, miktar]) => ({ urunAdi, miktar }));
-                        }
-                        console.log(`İrsaliye detay ${no}:`, JSON.stringify(irsDetayMap[no] || null));
-                    });
-                }
-
-                // İrsaliye satırlarını formatlayan helper
-                function irsaliyeSatirYaz(irsNo) {
-                    const satirlar = irsDetayMap[irsNo];
-                    if (!satirlar || satirlar.length === 0) return '';
-                    return satirlar.map(s => `    · ${s.urunAdi}: ${s.miktar} adet`).join('\n') + '\n';
-                }
-
-                // 5) Teslim Alınan İrsaliyeler (İçdaş → Kaulas)
-                if (irsGelen.length) {
-                    dm += `\n📥 *Teslim Alınan İrsaliyeler:*\n`;
-                    irsGelen.forEach(i => {
-                        dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)}\n`;
-                        const kirKilim = irsaliyeSatirYaz(i.IrsaliyeNo);
-                        if (kirKilim) {
-                            dm += kirKilim;
-                        } else {
-                            dm += `  Toplam: ${i.ToplamMiktar} adet\n`;
-                        }
-                    });
-                }
-
-                // 6) Teslim Edilen İrsaliyeler (Kaulas → İçdaş)
-                if (irsGiden.length) {
-                    dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
-                    irsGiden.forEach(i => {
-                        dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)}\n`;
-                        const kirKilim = irsaliyeSatirYaz(i.IrsaliyeNo);
-                        if (kirKilim) {
-                            dm += kirKilim;
-                        } else {
-                            dm += `  Toplam: ${i.ToplamMiktar} adet\n`;
-                        }
-                    });
-                }
-
-                // 7) İrsaliye listeden eşleşmeyenler — irsNolar listesini kullan
-                if (!irsGelen.length && !irsGiden.length && irsNolarListesi.length) {
-                    dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
-                    irsNolarListesi.forEach(no => {
-                        dm += `• ${no}\n`;
-                        const kirKilim = irsaliyeSatirYaz(no);
-                        if (kirKilim) dm += kirKilim;
-                    });
-                }
-
-                dm += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
-                await whatsappGonder(sender, dm);
+                // 5 dakika sonra temp dosyayı sil
+                setTimeout(() => {
+                    try { fs.unlinkSync(pdfLocalPath); } catch(e) {}
+                }, 300000);
 
             } catch(e) {
                 console.error('Detay hatası:', e.message);
@@ -1143,6 +953,18 @@ function iskontoluMu(siparis) {
 async function whatsappGonder(target, message) {
     return axios.post('https://api.fonnte.com/send', {
         target, message, countryCode: '0'
+    }, { headers: { 'Authorization': FONNTE_TOKEN } });
+}
+
+// PDF dosyası WhatsApp'a gönder — Fonnte url parametresiyle
+async function whatsappPdfGonder(target, pdfUrl, caption) {
+    return axios.post('https://api.fonnte.com/send', {
+        target,
+        url: pdfUrl,
+        filename: 'siparis_detay.pdf',
+        type: 'file',
+        message: caption || '',
+        countryCode: '0'
     }, { headers: { 'Authorization': FONNTE_TOKEN } });
 }
 
