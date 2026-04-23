@@ -464,7 +464,11 @@ async function icdasIslemYap(sender, secim, selamAdi) {
         mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
     }
     await whatsappGonder(sender, mesaj);
-    icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+    // case 1 kendi session'ını zaten ayarladı — üzerine yazma
+    const mevcutSes = icdasSession.get(sender) || {};
+    if (!mevcutSes.acikMod) {
+        icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+    }
     console.log(`✅ İçdaş seçim ${secim} işlendi -> ${sender}`);
 }
 
