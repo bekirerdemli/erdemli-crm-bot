@@ -194,23 +194,39 @@ async function icdasVeriCek(section = 'all', q = null, limit = 500) {
     }
 }
 
-// Sipariş satır detaylarını ayrı endpoint'ten çek
-async function icdasSiparisDetay(siparisId) {
-    try {
-        const url = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}&format=json`;
-        const res = await axios.get(url, { timeout: 8000 });
-        return res.data;
-    } catch(e) {
-        // JSON yoksa ham veri dene
-        try {
-            const url2 = `http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=siparis&q=${siparisId}`;
-            const res2 = await axios.get(url2, { timeout: 8000 });
-            return res2.data;
-        } catch(e2) {
-            console.error('Sipariş detay hatası:', e2.message);
-            return null;
-        }
+// Sipariş detay API — SiparisNo ile arama yap, tüm satır ve irsaliye detaylarını getir
+async function icdasSiparisDetayGetir(siparisNo, siparisId) {
+    const sonuclar = {};
+    
+    // Dolum ve İrsaliyeyi paralel çek — TÜMÜNÜ, q= değil tüm liste
+    const [dolumRes, irsRes] = await Promise.allSettled([
+        axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=dolum&limit=500`, { timeout: 10000 }),
+        axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye&limit=500`, { timeout: 10000 })
+    ]);
+
+    if (dolumRes.status === 'fulfilled') {
+        const tumDevam = dolumRes.value.data?.data?.dolum?.listeler?.devamEden || [];
+        const tumTamam = dolumRes.value.data?.data?.dolum?.listeler?.sonTamamlanan || [];
+        const tumDolumlar = [...tumDevam, ...tumTamam];
+        
+        // SiparisNo alanıyla filtrele
+        const sipDolumlar = tumDolumlar.filter(d => (d.SiparisNo || '') === siparisNo);
+        console.log(`📋 Toplam dolum: ${tumDolumlar.length} | Bu siparişe ait: ${sipDolumlar.length}`);
+        
+        sonuclar.sipDolumlar = sipDolumlar;
+    } else {
+        console.log('Dolum hatası:', dolumRes.reason?.message);
+        sonuclar.sipDolumlar = [];
     }
+
+    if (irsRes.status === 'fulfilled') {
+        sonuclar.irsaliye = irsRes.value.data;
+    } else {
+        console.log('İrsaliye hatası:', irsRes.reason?.message);
+        sonuclar.irsaliye = null;
+    }
+
+    return sonuclar;
 }
 
 async function icdasCevapla(sender, message, yetkiliAdi) {
@@ -243,67 +259,70 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             await whatsappGonder(sender, '⏳ Sipariş detayı yükleniyor...');
             try {
                 const sipNo = bulunan.SiparisNo;
+                const sipId = bulunan.Id;
 
-                // Bu siparişe ait dolumları q= ile ara, irsaliyeleri de çek
-                const [aramaSon, irsaliyeRes] = await Promise.all([
-                    icdasVeriCek('all', sipNo, 500),   // q=4500159008 → o siparişe ait tüm kayıtlar
-                    icdasVeriCek('irsaliye', null, 500)
-                ]);
+                // Tüm detay verilerini çek
+                const detay = await icdasSiparisDetayGetir(sipNo, sipId);
 
-                // Arama sonucundan bu siparişe ait dolumları al
-                const aramaKayitlari = aramaSon?.arama?.sonuc || [];
-                const dolumlar = aramaKayitlari.filter(k => k.tip === 'dolum');
-
-                // Dolumları ebat bazında say
-                const ebatSayim = {};
-                dolumlar.forEach(d => {
-                    const ebat = (d.EbatKodu || d.EbatAdi || 'Bilinmeyen').trim();
-                    if (!ebatSayim[ebat]) ebatSayim[ebat] = { tamam: 0, devam: 0 };
-                    if (d.DolumDurumu === 5) ebatSayim[ebat].tamam++;
-                    else ebatSayim[ebat].devam++;
-                });
-
-                // İrsaliyelerden bu siparişe ait olanları bul
-                const tumIrs = [
-                    ...(irsaliyeRes?.data?.irsaliye?.listeler?.gelen || []),
-                    ...(irsaliyeRes?.data?.irsaliye?.listeler?.giden || [])
-                ];
-                const irsGelen = tumIrs.filter(i => (i.Aciklama||'').includes(sipNo) && i.TurEtiket === 'Gelen');
-                const irsGiden = tumIrs.filter(i => (i.Aciklama||'').includes(sipNo) && i.TurEtiket === 'Giden');
-
-                // İrsaliyelerden ebat bazlı teslim gelen/giden hesabı
-                // (İrsaliye satırları varsa onları kullan, yoksa sipariş başlık verisini kullan)
                 const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
 
+                // ── Dolum: bu siparişe ait kayıtlar (SiparisNo ile filtrelenmiş) ──
+                const sipDolumlar = detay.sipDolumlar || [];
+
+                // Ebat bazlı sayım — teslim alınan (tamam) ve üretimde devam eden
+                const sipEbat = {};
+                sipDolumlar.forEach(d => {
+                    const ebat = (d.EbatKodu || d.EbatAdi || 'Bilinmeyen').trim();
+                    if (!sipEbat[ebat]) sipEbat[ebat] = { tamam: 0, devam: 0 };
+                    if (d.DolumDurumu === 5 || d.DurumEtiket === 'Dolum Tamamlandı') sipEbat[ebat].tamam++;
+                    else sipEbat[ebat].devam++;
+                });
+
+                // ── İrsaliye kırılımı — bu siparişe ait satırlar ──
+                const irsGelen = (detay.irsaliye?.data?.irsaliye?.listeler?.gelen || [])
+                    .filter(i => (i.Aciklama||'').includes(sipNo));
+                const irsGiden = (detay.irsaliye?.data?.irsaliye?.listeler?.giden || [])
+                    .filter(i => (i.Aciklama||'').includes(sipNo));
+
+                // ── Mesajı oluştur ──
                 let dm = `📋 *Sipariş Detayı*\n\n`;
                 dm += `*Sipariş No:* ${sipNo}\n`;
                 dm += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
                 dm += `*Durum:* ${bulunan.DurumEtiket}\n`;
-                dm += `*Toplam:* ${bulunan.ToplamMiktar} adet | *Teslim Alınan:* ${bulunan.TeslimAlinan} | *Kalan:* ${kalan}\n`;
 
-                // Ebat bazlı dolum kırılımı (bu siparişe ait)
-                if (Object.keys(ebatSayim).length) {
-                    dm += `\n📦 *Ürün Kırılımı (Dolum):*\n`;
-                    Object.entries(ebatSayim).forEach(([ebat, c]) => {
-                        const toplam = c.tamam + c.devam;
-                        dm += `• ${ebat}: ${toplam} adet`;
-                        if (c.devam > 0) dm += ` (${c.devam} devam ediyor)`;
+                // 1) Sipariş edilen ürünler
+                dm += `\n📋 *Sipariş Edilen:*\n`;
+                dm += `• Toplam: ${bulunan.ToplamMiktar} adet (${bulunan.SatirSayisi||'?'} ürün kalemi)\n`;
+
+                // 2) Ürün bazlı dolum kırılımı
+                if (Object.keys(sipEbat).length) {
+                    dm += `\n📦 *Teslim Alınan (Dolum Kırılımı):*\n`;
+                    Object.entries(sipEbat).forEach(([ebat, c]) => {
+                        dm += `• ${ebat}: ${c.tamam} adet tamamlandı`;
+                        if (c.devam > 0) dm += ` | ${c.devam} adet devam ediyor`;
                         dm += `\n`;
                     });
                 } else {
-                    dm += `\n📦 *Ürün Kırılımı:* Detay bulunamadı\n`;
+                    dm += `\n📦 *Teslim Alınan:* ${bulunan.TeslimAlinan} adet\n`;
                 }
 
-                // Teslim Alınan İrsaliyeler
+                // 3) Kalan
+                dm += `\n⏳ *Kalan:* ${kalan} adet\n`;
+
+                // 4) Teslim Alınan İrsaliyeler (İçdaş → Kaulas)
                 if (irsGelen.length) {
                     dm += `\n📥 *Teslim Alınan İrsaliyeler:*\n`;
-                    irsGelen.forEach(i => { dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`; });
+                    irsGelen.forEach(i => {
+                        dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`;
+                    });
                 }
 
-                // Teslim Edilen İrsaliyeler
+                // 5) Teslim Edilen İrsaliyeler (Kaulas → İçdaş)
                 if (irsGiden.length) {
                     dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
-                    irsGiden.forEach(i => { dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`; });
+                    irsGiden.forEach(i => {
+                        dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`;
+                    });
                 }
 
                 dm += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
