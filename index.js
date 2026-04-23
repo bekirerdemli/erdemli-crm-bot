@@ -230,6 +230,72 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         return;
     }
 
+    // ── AÇIK SİPARİŞ LİSTESİNDEYKEN — numara yazılırsa detay aç (EN ÖNCE KONTROL ET) ──
+    if (ses.acikMod && ses.acikSiparisler && msgTemiz !== '0') {
+        const siraMatch = msgTemiz.match(/^([1-9])$/);
+        const sipNoMatch = msgTemiz.match(/^\d{7,}$/);
+        let bulunan = null;
+        if (siraMatch) bulunan = ses.acikSiparisler[parseInt(siraMatch[1]) - 1] || null;
+        else if (sipNoMatch) bulunan = ses.acikSiparisler.find(s => s.SiparisNo === msgTemiz) || null;
+
+        if (bulunan) {
+            icdasSession.set(sender, { ...ses, acikMod: false, timestamp: Date.now() });
+            await whatsappGonder(sender, '⏳ Sipariş detayı yükleniyor...');
+            try {
+                const [irsaliyeRes, stokRes] = await Promise.all([
+                    icdasVeriCek('irsaliye', null, 500),
+                    icdasVeriCek('stok', null, 500)
+                ]);
+                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
+                const stokListe = stokRes?.data?.stok?.listeler?.aktif || [];
+                const tekerler = stokListe.filter(s => (s.StokIsmi||'').toUpperCase().includes('TEKERLEK'));
+                const tumIrs = [
+                    ...(irsaliyeRes?.data?.irsaliye?.listeler?.gelen || []),
+                    ...(irsaliyeRes?.data?.irsaliye?.listeler?.giden || [])
+                ];
+                const sipNo = bulunan.SiparisNo;
+                const irsGelen = tumIrs.filter(i => i.TurEtiket === 'Gelen' && (i.Aciklama||'').includes(sipNo));
+                const irsGiden = tumIrs.filter(i => i.TurEtiket === 'Giden' && (i.Aciklama||'').includes(sipNo));
+
+                let dm = `📋 *Sipariş Detayı*\n\n`;
+                dm += `*Sipariş No:* ${sipNo}\n`;
+                dm += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
+                dm += `*Durum:* ${bulunan.DurumEtiket}\n`;
+
+                dm += `\n📦 *Ürün Kırılımı:*\n`;
+                if (tekerler.length) {
+                    tekerler.forEach(t => {
+                        dm += `• ${t.StokIsmi}\n`;
+                        dm += `  Sipariş: ${t.Giris||0} | Teslim Alınan: ${t.Giris||0} | Teslim Edilen: ${t.Cikis||0} | Kalan: ${t.Kalan||0}\n`;
+                    });
+                } else {
+                    dm += `• Toplam: ${bulunan.ToplamMiktar} | Teslim Alınan: ${bulunan.TeslimAlinan} | Teslim Edilen: ${bulunan.SevkEdilen} | Kalan: ${kalan}\n`;
+                }
+
+                if (irsGelen.length) {
+                    dm += `\n📥 *Teslim Alınan İrsaliyeler:*\n`;
+                    irsGelen.forEach(i => { dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`; });
+                }
+                if (irsGiden.length) {
+                    dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
+                    irsGiden.forEach(i => { dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`; });
+                }
+                dm += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
+                await whatsappGonder(sender, dm);
+            } catch(e) {
+                console.error('Detay hatası:', e.message);
+                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
+                await whatsappGonder(sender,
+                    `📋 *${bulunan.SiparisNo}*\nToplam: ${bulunan.ToplamMiktar} | Teslim Alınan: ${bulunan.TeslimAlinan} | Kalan: ${kalan}\n─────────────────\n0️⃣ Ana Menüye Dön`
+                );
+            }
+            return;
+        }
+        // Geçersiz sıra numarası — listeyi tekrar göster
+        await whatsappGonder(sender, `Geçersiz seçim. Lütfen listeden bir numara yazınız.\n─────────────────\n0️⃣ Ana Menüye Dön`);
+        return;
+    }
+
     // ── MENÜ bekleniyor ──
     if (ses.state === 'menu' || ses.state === 'israr') {
         if (!msgSayi) {
@@ -275,110 +341,6 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
     }
 
     // ── İşlem yapıldı, yeni mesaj geldi — geçerli seçim mi? ──
-    
-    // Açık sipariş listesindeyken numara yazılırsa detay göster
-    if (ses.acikMod && ses.acikSiparisler) {
-        // 1,2,3... gibi sıra numarası mı?
-        const siraMatch = msgTemiz.match(/^([1-9])$/);
-        // Uzun sipariş no mu?
-        const sipNoMatch = msgTemiz.match(/^\d{7,}$/);
-        
-        let bulunan = null;
-        if (siraMatch) {
-            bulunan = ses.acikSiparisler[parseInt(siraMatch[1]) - 1] || null;
-        } else if (sipNoMatch) {
-            bulunan = ses.acikSiparisler.find(s => s.SiparisNo === msgTemiz) || null;
-        }
-
-        if (bulunan) {
-            icdasSession.set(sender, { ...ses, acikMod: false, timestamp: Date.now() });
-            await whatsappGonder(sender, '⏳ Sipariş detayı yükleniyor...');
-            
-            try {
-                // Detay API'sini çağır
-                const detayUrl = `http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=siparis&q=${bulunan.SiparisNo}`;
-                const [detayRes, irsaliyeRes, stokRes] = await Promise.all([
-                    axios.get(detayUrl, { timeout: 10000 }),
-                    icdasVeriCek('irsaliye', null, 500),
-                    icdasVeriCek('stok', null, 500)
-                ]);
-
-                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
-                
-                // Stok listesinden bu siparişe ait tekerlek kırılımı
-                const stokListe = stokRes?.data?.stok?.listeler?.aktif || [];
-                const tekerler = stokListe.filter(s => (s.StokIsmi||'').toUpperCase().includes('TEKERLEK'));
-                
-                // İrsaliyelerden bu siparişe ait olanları bul
-                const tumIrsaliyeler = [
-                    ...(irsaliyeRes?.data?.irsaliye?.listeler?.gelen || []),
-                    ...(irsaliyeRes?.data?.irsaliye?.listeler?.giden || [])
-                ];
-                const sipNo = bulunan.SiparisNo;
-                const ilgiliIrsaliyeGelen = tumIrsaliyeler.filter(i => 
-                    i.TurEtiket === 'Gelen' && (i.Aciklama||'').includes(sipNo)
-                );
-                const ilgiliIrsaliyeGiden = tumIrsaliyeler.filter(i => 
-                    i.TurEtiket === 'Giden' && (i.Aciklama||'').includes(sipNo)
-                );
-
-                let mesaj = `📋 *Sipariş Detayı*\n\n`;
-                mesaj += `*Sipariş No:* ${bulunan.SiparisNo}\n`;
-                mesaj += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
-                mesaj += `*Durum:* ${bulunan.DurumEtiket}\n`;
-
-                // Ürün kırılımı
-                mesaj += `\n📦 *Sipariş Miktarı (Ürün Kırılımı):*\n`;
-                if (tekerler.length) {
-                    tekerler.forEach(t => {
-                        mesaj += `• ${t.StokIsmi}:\n`;
-                        mesaj += `  Sipariş: ${bulunan.ToplamMiktar} | Teslim Alınan: ${t.Giris||0} | Teslim Edilen: ${t.Cikis||0} | Kalan: ${t.Kalan||0}\n`;
-                    });
-                } else {
-                    mesaj += `• Toplam: ${bulunan.ToplamMiktar} adet\n`;
-                    mesaj += `• Teslim Alınan: ${bulunan.TeslimAlinan} adet\n`;
-                    mesaj += `• Teslim Edilen: ${bulunan.SevkEdilen} adet\n`;
-                    mesaj += `• Kalan: ${kalan} adet\n`;
-                }
-
-                // Teslim Alınan İrsaliyeler
-                if (ilgiliIrsaliyeGelen.length) {
-                    mesaj += `\n📥 *Teslim Alınan İrsaliyeler:*\n`;
-                    ilgiliIrsaliyeGelen.forEach(i => {
-                        mesaj += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`;
-                    });
-                }
-
-                // Teslim Edilen İrsaliyeler
-                if (ilgiliIrsaliyeGiden.length) {
-                    mesaj += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
-                    ilgiliIrsaliyeGiden.forEach(i => {
-                        mesaj += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`;
-                    });
-                }
-
-                mesaj += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
-                await whatsappGonder(sender, mesaj);
-
-            } catch(e) {
-                console.error('Sipariş detay hatası:', e.message);
-                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
-                const temelMesaj = 
-                    `📋 *Sipariş Detayı*\n\n` +
-                    `*Sipariş No:* ${bulunan.SiparisNo}\n` +
-                    `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n` +
-                    `*Toplam:* ${bulunan.ToplamMiktar} adet\n` +
-                    `*Teslim Alınan:* ${bulunan.TeslimAlinan} adet\n` +
-                    `*Teslim Edilen:* ${bulunan.SevkEdilen} adet\n` +
-                    `*Kalan:* ${kalan} adet\n` +
-                    `*Durum:* ${bulunan.DurumEtiket}\n` +
-                    `─────────────────\n0️⃣ Ana Menüye Dön`;
-                await whatsappGonder(sender, temelMesaj);
-            }
-            return;
-        }
-    }
-
     if (msgSayi) {
         if (msgSayi === '0') {
             icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
