@@ -318,63 +318,65 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
         if (bulunan) {
             icdasSession.set(sender, { ...ses, acikMod: false, timestamp: Date.now() });
-            await whatsappGonder(sender, '⏳ Sipariş detayı yükleniyor...');
+            await whatsappGonder(sender, '⏳ Sipariş detayı hazırlanıyor...');
             try {
                 const sipNo = bulunan.SiparisNo;
                 const sipId = bulunan.Id;
 
-                // Tüm detay verilerini çek
-                const detay = await icdasSiparisDetayGetir(sipNo, sipId);
-
-                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
-
-                // Sipariş satır detayları — özet için kullan
-                const satirlar = detay.satirlar || [];
-                const siparisEbat = {};
-                const kalanEB = {};
-                satirlar.forEach(s => {
-                    siparisEbat[s.urunAdi] = s.sipMiktar;
-                    kalanEB[s.urunAdi] = s.kalanMiktar;
-                });
-                function tekerlerMi(ad) { return (ad||'').toUpperCase().includes('TEKERLEK'); }
-
-                // ── PDF indir ve WhatsApp'a gönder ──
-                // Sunucunun dış URL'ini çek (Render'da PORT env ile birlikte BASE_URL env'i tanımlayın)
-                const BASE_URL = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+                // ── PDF'i kaynaktan indir (detay çekmeye gerek yok) ──
+                const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
                 const pdfSrcUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${sipId}`;
                 const pdfFileName = `siparis_${sipNo}_${Date.now()}.pdf`;
                 const pdfLocalPath = path.join(PDF_DIR, pdfFileName);
+
+                console.log(`📥 PDF indiriliyor: ${pdfSrcUrl}`);
+                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
+                const pdfBuffer = Buffer.from(pdfRes.data);
+                
+                // Gerçekten PDF mi kontrol et
+                const pdfHeader = pdfBuffer.slice(0, 5).toString('ascii');
+                if (!pdfHeader.startsWith('%PDF')) {
+                    throw new Error(`PDF değil, gelen içerik: ${pdfHeader}`);
+                }
+                
+                fs.writeFileSync(pdfLocalPath, pdfBuffer);
+                console.log(`📄 PDF kaydedildi: ${pdfLocalPath} (${pdfBuffer.length} byte)`);
+
+                if (!BASE_URL) {
+                    throw new Error('BASE_URL env tanımlı değil — Render ortam değişkenlerine ekleyin');
+                }
+
                 const pdfPublicUrl = `${BASE_URL}/pdf/${pdfFileName}`;
 
-                // PDF'i kaynaktan indir ve locale kaydet
-                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 15000 });
-                fs.writeFileSync(pdfLocalPath, Buffer.from(pdfRes.data));
-                console.log(`📄 PDF kaydedildi: ${pdfLocalPath} (${pdfRes.data.byteLength} byte)`);
-
-                // Kısa özet mesaj
-                const tumUrunler2 = Object.keys(siparisEbat).filter(tekerlerMi);
-                let ozet = `📋 *Sipariş No:* ${sipNo}\n`;
-                ozet += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)} | *Durum:* ${bulunan.DurumEtiket}\n`;
-                if (tumUrunler2.length) {
-                    const kalanTekerlek = Object.entries(kalanEB).filter(([ad]) => tekerlerMi(ad));
-                    ozet += `*Kalan:* ${kalanTekerlek.map(([ad, a]) => `${ad.replace('(YENİ)','').trim()} ${a} adet`).join(', ')}\n`;
-                }
+                // Kısa özet mesaj (bulunan objesinden — ek API çağrısı yok)
+                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
+                let ozet = `📋 *Sipariş Detay Raporu*\n`;
+                ozet += `*Sipariş No:* ${sipNo}\n`;
+                ozet += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
+                ozet += `*Durum:* ${bulunan.DurumEtiket}\n`;
+                ozet += `*Toplam:* ${bulunan.ToplamMiktar} | *Teslim:* ${bulunan.TeslimAlinan} | *Kalan:* ${kalan}\n`;
                 ozet += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
 
-                // Fonnte'ye URL ile gönder
+                // Fonnte dosya gönderimi — url parametresiyle
+                console.log(`📤 PDF Fonnte'ye gönderiliyor: ${pdfPublicUrl}`);
                 await whatsappPdfGonder(sender, pdfPublicUrl, ozet);
-                console.log(`📤 PDF WhatsApp'a gönderildi -> ${sender} | URL: ${pdfPublicUrl}`);
+                console.log(`✅ PDF gönderildi -> ${sender}`);
 
-                // 5 dakika sonra temp dosyayı sil
+                // 10 dakika sonra temp dosyayı sil
                 setTimeout(() => {
-                    try { fs.unlinkSync(pdfLocalPath); } catch(e) {}
-                }, 300000);
+                    try { fs.unlinkSync(pdfLocalPath); console.log(`🗑 Temp PDF silindi: ${pdfFileName}`); } catch(e) {}
+                }, 600000);
 
             } catch(e) {
-                console.error('Detay hatası:', e.message);
+                console.error('PDF detay hatası:', e.message);
                 const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
+                // PDF gönderilemezse metin özet gönder
                 await whatsappGonder(sender,
-                    `📋 *${bulunan.SiparisNo}*\nToplam: ${bulunan.ToplamMiktar} | Teslim Alınan: ${bulunan.TeslimAlinan} | Kalan: ${kalan}\n─────────────────\n0️⃣ Ana Menüye Dön`
+                    `📋 *${bulunan.SiparisNo}*\n` +
+                    `Tarih: ${(bulunan.SiparisTarihi||'').substring(0,10)} | Durum: ${bulunan.DurumEtiket}\n` +
+                    `Toplam: ${bulunan.ToplamMiktar} | Teslim: ${bulunan.TeslimAlinan} | Kalan: ${kalan}\n` +
+                    `\n⚠️ PDF gönderilemedi: ${e.message}\n` +
+                    `\n─────────────────\n0️⃣ Ana Menüye Dön`
                 );
             }
             return;
@@ -958,14 +960,20 @@ async function whatsappGonder(target, message) {
 
 // PDF dosyası WhatsApp'a gönder — Fonnte url parametresiyle
 async function whatsappPdfGonder(target, pdfUrl, caption) {
-    return axios.post('https://api.fonnte.com/send', {
+    const payload = {
         target,
         url: pdfUrl,
+        type: 'document',
         filename: 'siparis_detay.pdf',
-        type: 'file',
         message: caption || '',
         countryCode: '0'
-    }, { headers: { 'Authorization': FONNTE_TOKEN } });
+    };
+    console.log('Fonnte PDF payload:', JSON.stringify(payload));
+    const resp = await axios.post('https://api.fonnte.com/send', payload,
+        { headers: { 'Authorization': FONNTE_TOKEN } }
+    );
+    console.log('Fonnte PDF response:', JSON.stringify(resp.data));
+    return resp;
 }
 
 
