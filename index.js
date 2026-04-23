@@ -286,6 +286,12 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
         const siparisListesi = veriSiparis?.data?.siparis?.listeler || {};
 
+        // TEKERLEK olan stok satırlarını filtrele — AI'ya sade veri gönder
+        const tekerStok = stokListesi.filter(s => 
+            (s.StokIsmi || '').toUpperCase().includes('TEKERLEK') ||
+            (s.StokIsmi || '').match(/\d{3,4}[-\/]\d{2,3}/)
+        );
+
         veriBlok = JSON.stringify({
             arama: veriArama?.arama || null,
 
@@ -298,6 +304,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             // Stok: ebat bazlı giriş/çıkış/kalan (PDF'deki "Gelen Stok Özeti" buradan)
             stokEbatDurum: stokEbatDurum,
             stokTumListe: stokListesi,
+            tekerStokOzet: tekerStok,  // Sadece tekerlek olan satırlar — EBAT KIRILIMININI BURADAN OKU
 
             // İrsaliye hareketleri (gelen/giden)
             irsaliyeGelen: veriIrsaliye?.data?.irsaliye?.listeler?.gelen || [],
@@ -329,6 +336,7 @@ ${veriBlok}
 VERİ AÇIKLAMALARI:
 - siparisAcik[] → Açık siparişler. Alanlar: SiparisNo, Id, ToplamMiktar, TeslimAlinan, SevkEdilen, SatirSayisi. Kalan = ToplamMiktar - TeslimAlinan
 - siparisDetaylar[] → Her siparişin ürün satır detayları. İçinde UrunAdi/StokAdi, SiparisMiktari, TeslimAlinan, Kalan gibi alanlar olabilir — EBAT BAZLI MİKTAR BURADAN OKUNUR
+- tekerStokOzet[] → SADECE TEKERLEK stok satırları: {StokIsmi, Giris, Cikis, Kalan} — SİPARİŞ SORULARINDA BU ALANI KULLAN
 - stokEbatDurum → Ebat bazlı stok durumu: {StokAdı: {giris, cikis, kalan}}. PDF'deki "Gelen Stok Özeti" buradan okunur
 - stokTumListe[] → Tüm stok kartları: Kod, StokIsmi, Giris, Cikis, Kalan
 - irsaliyeGiden[] → Gönderilen irsaliyeler (sevkiyatlar). Sipariş bazlı gönderilen miktarlar burada
@@ -343,17 +351,22 @@ MÜŞTERİNİN MESAJI: "${message}"
 YANIT KURALLARI:
 1. Doğal ve samimi konuş — robot gibi değil.
 
-2. SİPARİŞ DETAYI sorusunda (kaç sipariş, ne durumda):
-   → siparisAcik listesinden: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen göster
-   → Kalan = ToplamMiktar - TeslimAlinan hesapla
+2. SİPARİŞ DETAYI sorusunda (açık sipariş, ürün detayları, ne geldi ne gitti):
+   A) siparisAcik listesinden genel özeti ver: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen
+   B) MUTLAKA stokTumListe'den ebat bazlı kırılımı da ver:
+      → stokTumListe içindeki her satır için: StokIsmi, Giris (bize gelen), Cikis (biz gönderdik), Kalan
+      → Sadece TEKERLEK içeren satırları göster (JANT, SEGMAN satırlarını atlayabilirsin)
+      → Format: "• 1200-20 TEKERLEK: Gelen 46 adet | Giden 41 adet | Kalan 5 adet"
+      → Format: "• 1200-24 TEKERLEK: Gelen 72 adet | Giden 72 adet | Kalan 0 adet"
+   C) siparisDetaylar varsa oradan da ek bilgi ekle
 
 3. EBAT BAZLI MİKTAR sorusunda (kaç tane 1200-20, kaç tane 1200-24):
-   → stokTumListe içinde "1200-20" veya "1200-24" geçen satırları bul
-   → Her ebat için: Giris (teslim alınan), Cikis (gönderilen), Kalan değerlerini ver
-   → Örn: "1200-20 TEKERLEK(YENİ): Teslim Alınan 46 adet, Gönderilen 41 adet, Kalan 5 adet"
+   → stokTumListe içinde TEKERLEK geçen satırları bul ve listele
+   → Giris = teslim alınan, Cikis = gönderilen, Kalan = stokta kalan
+   → AYRICA dolumEbatSayim'den dolum adetlerini de ekle
 
 4. GELEN/GİDEN İRSALİYE sorusunda:
-   → irsaliyeGiden listesinden gönderilen miktarları, irsaliyeGelen'den alınanları göster
+   → irsaliyeGiden ve irsaliyeGelen listelerini kullan, tarih ve miktar bilgisini ver
 
 5. DOLUM DURUMU sorusunda:
    → dolumEbatSayim ve dolumDevamEden listelerini kullan
