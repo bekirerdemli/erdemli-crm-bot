@@ -275,6 +275,27 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
     }
 
     // ── İşlem yapıldı, yeni mesaj geldi — geçerli seçim mi? ──
+    
+    // Sipariş numarası yazıldıysa detay göster
+    if (ses.acikSiparisler && /\d{7,}/.test(msgTemiz)) {
+        const sipNo = msgTemiz.trim();
+        const bulunan = ses.acikSiparisler.find(s => s.SiparisNo === sipNo);
+        if (bulunan) {
+            const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
+            const detayMesaj = `📋 *Sipariş Detayı*\n\n` +
+                `*Sipariş No:* ${bulunan.SiparisNo}\n` +
+                `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n` +
+                `*Toplam:* ${bulunan.ToplamMiktar} adet\n` +
+                `*Teslim Alınan:* ${bulunan.TeslimAlinan} adet\n` +
+                `*Sevk Edilen:* ${bulunan.SevkEdilen} adet\n` +
+                `*Kalan:* ${kalan} adet\n` +
+                `*Durum:* ${bulunan.DurumEtiket}\n` +
+                `─────────────────\n0️⃣ Ana Menüye Dön`;
+            await whatsappGonder(sender, detayMesaj);
+            return;
+        }
+    }
+
     if (msgSayi) {
         if (msgSayi === '0') {
             icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
@@ -305,7 +326,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
     
     try {
         switch(secim) {
-            case '1': { // Açık Siparişler
+            case '1': { // Açık Siparişler — sadece liste
                 const vS = await icdasVeriCek('siparis', null, 500);
                 const acik = vS?.data?.siparis?.listeler?.acik || [];
                 
@@ -314,15 +335,15 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                 } else {
                     mesaj = '📦 *Açık Siparişler*\n\n';
                     acik.forEach((s, i) => {
-                        const kalan = (parseFloat(s.ToplamMiktar)||0) - (parseFloat(s.TeslimAlinan)||0);
-                        mesaj += `*Sipariş No:* ${s.SiparisNo}\n`;
-                        mesaj += `*Tarih:* ${(s.SiparisTarihi||'').substring(0,10)}\n`;
-                        mesaj += `*Toplam:* ${s.ToplamMiktar} adet\n`;
-                        mesaj += `*Teslim Alınan:* ${s.TeslimAlinan} adet\n`;
-                        mesaj += `*Sevk Edilen:* ${s.SevkEdilen} adet\n`;
-                        mesaj += `*Kalan:* ${kalan} adet\n`;
-                        mesaj += `*Durum:* ${s.DurumEtiket}\n`;
-                        if (i < acik.length - 1) mesaj += '─────────────────\n';
+                        mesaj += `${i+1}) *${s.SiparisNo}*  |  ${(s.SiparisTarihi||'').substring(0,10)}\n`;
+                    });
+                    mesaj += '─────────────────\n';
+                    mesaj += 'Detay için sipariş numarasını yazınız.';
+                    // Seçilen sipariş bilgisini session'a kaydet
+                    icdasSession.set(sender, { 
+                        state: 'menu', 
+                        acikSiparisler: acik,
+                        timestamp: Date.now() 
                     });
                 }
                 break;
