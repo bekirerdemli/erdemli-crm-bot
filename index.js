@@ -185,7 +185,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
     if (kodMatch) {
         // Tekil kod araması — tüm modüllerde arar
         veriArama = await icdasVeriCek('all', kodMatch[0]);
-    } else if (/SIPARIS|SIPARI|LASTIK.*ADET|KACT.*LASTIK|KACT.*TEKER|TEKER.*ADET/.test(msgU)) {
+    } else if (/SIPARIS|SIPARI|LASTIK|TEKER|ADET|KAC TAN|KACT|\d{3,4}[-\/]\d{2,3}/.test(msgU)) {
         // Sipariş sorusu — sipariş detaylarını VE dolumları paralel çek
         [veriSiparis, veriDolum] = await Promise.all([
             icdasVeriCek('siparis'),
@@ -210,17 +210,31 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
     const selamAdi = yetkiliAdi ? ` ${yetkiliAdi.split(' ')[0]}` : '';
     const ilkMesaj = ilkMesajMi(sender);
 
-    // Veriyi birleştir
-    const veriBlok = JSON.stringify({
-        arama: veriArama?.arama || null,
-        siparis: veriSiparis?.data?.siparis || null,
-        siparisDetaylari: veriSiparis?.data?.siparis?.listeler || null,
-        dolum: veriDolum?.data?.dolum || null,
-        irsaliye: veriIrsaliye?.data?.irsaliye || null,
-        stok: veriStok?.data?.stok || null,
-        paketleme: veriGenel?.data?.paketleme || null,
-        genelOzet: veriGenel?.genelOzet || null,
-    });
+    // Veriyi birleştir — null gelirse fallback olarak all çek
+    let veriBlok;
+    try {
+        // Eğer sipariş verisi bekleniyor ama gelmemişse tekrar dene
+        if (!veriSiparis && !veriDolum && !veriIrsaliye && !veriStok && !veriGenel && !veriArama) {
+            console.log('⚠️ Tüm veriler null — fallback: all çekiliyor');
+            veriGenel = await icdasVeriCek('all');
+        }
+        veriBlok = JSON.stringify({
+            arama: veriArama?.arama || null,
+            siparisOzet: veriSiparis?.data?.siparis?.ozet || null,
+            siparisAcik: veriSiparis?.data?.siparis?.listeler?.acik || [],
+            siparissOnTamamlanan: veriSiparis?.data?.siparis?.listeler?.sonTamamlanan || [],
+            dolumDevamEden: veriDolum?.data?.dolum?.listeler?.devamEden || [],
+            dolumSonTamamlanan: veriDolum?.data?.dolum?.listeler?.sonTamamlanan || [],
+            dolumOzet: veriDolum?.data?.dolum?.ozet || null,
+            irsaliye: veriIrsaliye?.data?.irsaliye || null,
+            stok: veriStok?.data?.stok || null,
+            paketleme: veriGenel?.data?.paketleme || null,
+            genelOzet: veriGenel?.genelOzet || null,
+        });
+    } catch(e) {
+        console.error('Veri birleştirme hatası:', e.message);
+        veriBlok = JSON.stringify({ hata: 'Veri işlenemedi' });
+    }
 
     const prompt = `Sen Erdemli Kauçuk firmasının WhatsApp asistanısın - adın RobERD.
 Şu an İÇDAŞ ÇELİK ENERJİ TERSANE VE ULAŞIM SANAYİ firmasından${selamAdi ? selamAdi + " adlı yetkili ile" : ""} konuşuyorsun.
