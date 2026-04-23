@@ -156,11 +156,11 @@ function icdasMi(cariAdi) {
     return eslesti;
 }
 
-async function icdasVeriCek(section = 'all', q = null) {
+async function icdasVeriCek(section = 'all', q = null, limit = 100) {
     try {
         const url = new URL(ICDAS_API);
         url.searchParams.set('section', section);
-        url.searchParams.set('limit', '50');
+        url.searchParams.set('limit', String(limit));
         if (q) url.searchParams.set('q', q);
         const res = await axios.get(url.toString(), { timeout: 8000 });
         return res.data;
@@ -186,10 +186,10 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         // Tekil kod araması — tüm modüllerde arar
         veriArama = await icdasVeriCek('all', kodMatch[0]);
     } else if (/SIPARIS|SIPARI|LASTIK|TEKER|ADET|KAC TAN|KACT|\d{3,4}[-\/]\d{2,3}/.test(msgU)) {
-        // Sipariş sorusu — sipariş detaylarını VE dolumları paralel çek
+        // Sipariş sorusu — sipariş + detaylar + dolumlar paralel çek
         [veriSiparis, veriDolum] = await Promise.all([
-            icdasVeriCek('siparis'),
-            icdasVeriCek('dolum')
+            icdasVeriCek('siparis', null, 500),   // limit yüksek tut — tüm satırlar gelsin
+            icdasVeriCek('dolum', null, 500)
         ]);
     } else if (/IRSALIYE|SEVK|TESLIMAT|GELEN|GIDEN/.test(msgU)) {
         [veriIrsaliye, veriDolum] = await Promise.all([
@@ -218,11 +218,33 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             console.log('⚠️ Tüm veriler null — fallback: all çekiliyor');
             veriGenel = await icdasVeriCek('all');
         }
+        // Sipariş detay satırlarını EbatKodu bazında grupla
+        const dolumTumListe = [
+            ...(veriDolum?.data?.dolum?.listeler?.devamEden || []),
+            ...(veriDolum?.data?.dolum?.listeler?.sonTamamlanan || [])
+        ];
+        
+        // EbatKodu bazında say
+        const ebatSayim = {};
+        dolumTumListe.forEach(d => {
+            const ebat = d.EbatKodu || d.EbatAdi || 'Bilinmeyen';
+            ebatSayim[ebat] = (ebatSayim[ebat] || 0) + 1;
+        });
+
+        // Sipariş detay satırları — API'den gelen tüm alanlar
+        const siparisListesi = veriSiparis?.data?.siparis?.listeler || {};
+        const siparisDetaylar = veriSiparis?.data?.siparisDetaylari 
+                             || veriSiparis?.data?.siparis?.listeler?.detaylar 
+                             || veriSiparis?.data?.siparis?.listeler?.satirlar 
+                             || [];
+
         veriBlok = JSON.stringify({
             arama: veriArama?.arama || null,
             siparisOzet: veriSiparis?.data?.siparis?.ozet || null,
-            siparisAcik: veriSiparis?.data?.siparis?.listeler?.acik || [],
-            siparissOnTamamlanan: veriSiparis?.data?.siparis?.listeler?.sonTamamlanan || [],
+            siparisAcik: siparisListesi?.acik || [],
+            siparisDetaylar: siparisDetaylar,           // Satır bazlı detaylar (ebat + miktar)
+            siparissOnTamamlanan: siparisListesi?.sonTamamlanan || [],
+            dolumEbatSayim: ebatSayim,                 // {"1200-20": 45, "1200-24": 73} formatı
             dolumDevamEden: veriDolum?.data?.dolum?.listeler?.devamEden || [],
             dolumSonTamamlanan: veriDolum?.data?.dolum?.listeler?.sonTamamlanan || [],
             dolumOzet: veriDolum?.data?.dolum?.ozet || null,
@@ -245,26 +267,27 @@ SİSTEM VERİSİ:
 ${veriBlok}
 
 VERİ AÇIKLAMALARI:
-- siparis.listeler.acik → açık/kısmi siparişler (SiparisDurumu 1=Yeni, 2=Kısmi)
-- siparis.listeler.acik[].SatirSayisi → kaç farklı ürün kalemi var
-- siparis.listeler.acik[].ToplamMiktar / TeslimAlinan / SevkEdilen → adet bilgileri
-- dolum.listeler.devamEden → şu an dolumda olan lastikler (EbatKodu = lastik ölçüsü)
-- dolum.listeler.sonTamamlanan → son tamamlanan dolumlar (EbatKodu, BosAgirlik, DoluAgirlik)
-- irsaliye.listeler.gelen / giden → gelen ve giden irsaliyeler
-- arama → belirli bir kod (KD-, SIP-, IRS-) sorgulandığında sonuç
-- stok.listeler.aktif → lastik stok kartları (Kod, StokIsmi, Kalan adet)
+- siparisAcik[] → açık/kısmi siparişler. Her kayıt: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen, SatirSayisi
+- siparisDetaylar[] → sipariş SATIR detayları — her satırda ebat ve miktar bilgisi olabilir
+- dolumEbatSayim → {"1200-20": 45, "1200-24": 73} formatında HAZIR ebat bazlı sayım — BU ALANI KULLAN
+- dolumDevamEden[] → şu an devam eden dolumlar (EbatKodu, DolumDurumu, SiparisNo)
+- dolumSonTamamlanan[] → tamamlanan dolumlar (EbatKodu, BosAgirlik, DoluAgirlik)
+- irsaliye → gelen/giden/hurda irsaliyeler
+- arama → KD-, SIP-, IRS- kod sorgusu sonucu
+- stok.listeler.aktif[] → stok kartları (Kod, StokIsmi, Kalan)
 
 MÜŞTERİNİN MESAJI: "${message}"
 
 YANIT KURALLARI:
 1. Doğal ve samimi konuş — robot gibi değil.
-2. Lastik ölçüsü sorusunda (1200-20, 1200-24 vb.): dolum listesindeki EbatKodu ve EbatAdi alanlarını tara, her ölçüden kaç adet olduğunu say ve listele.
-3. Sipariş detayı sorusunda: açık sipariş listesindeki ToplamMiktar, TeslimAlinan, SevkEdilen ve Kalan (=Toplam-Teslim) değerlerini hesapla ve göster.
-4. "Kaç tane geldi/gitti" sorusunda: irsaliye listesini kullan, ebat bazında say.
-5. Genel durum sorusunda: genelOzet'ten kısa özet ver.
-6. Kod sorgusunda: arama.sonuc içinden ilgili kaydı bul ve durumunu anlat.
-7. Veri yoksa veya null ise: "Şu an sisteme ulaşamıyorum, lütfen tekrar deneyin."
-8. Kısa, net, profesyonel Türkçe. Gereksiz tekrar yapma.`;
+2. "Kaç tane 1200-20 / 1200-24" gibi ebat sorusunda: ÖNCE dolumEbatSayim alanını kullan. Bu alan zaten hazır sayılmış ebat dağılımını verir. Örn: dolumEbatSayim = {"1200-20 TEKERLEK": 45} → "1200-20'den 45 adet dolum yapılmış."
+3. Sipariş detayı sorusunda: siparisAcik listesinden ToplamMiktar, TeslimAlinan, SevkEdilen bilgilerini ver. Kalan = ToplamMiktar - TeslimAlinan olarak hesapla.
+4. Dolum detayı sorusunda: dolumDevamEden ve dolumSonTamamlanan listelerini kullan.
+5. "Kaç tane geldi/gitti" sorusunda: irsaliye listesini kullan.
+6. Genel durum sorusunda: genelOzet'ten kısa özet ver.
+7. Kod sorgusunda: arama.sonuc içinden kaydı bul.
+8. Veri boş veya null gelirse: ilgili ebat için "Sistemde kayıt bulunamadı" de, genel hata mesajı verme.
+9. Kısa, net, profesyonel Türkçe. Gereksiz tekrar yapma.`;
 
     const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
     const result = await model.generateContent(prompt);
