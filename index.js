@@ -196,97 +196,78 @@ async function icdasVeriCek(section = 'all', q = null, limit = 500) {
 
 // Sipariş detay API — SiparisNo ile arama yap, tüm satır ve irsaliye detaylarını getir
 async function icdasSiparisDetayGetir(siparisNo, siparisId) {
-    const sonuclar = { satirlar: [], sipDolumlar: [], irsaliye: null, stokMap: {} };
-    
-    // Tüm verileri paralel çek — JSON endpoint kullan (html parse yerine)
-    const [jsonRes, irsRes, dolumRes] = await Promise.allSettled([
+    const sonuclar = { satirlar: [], sipDolumlar: [], irsaliye: null, stokMap: {}, irsNolar: [] };
+
+    // Tüm verileri paralel çek — JSON + HTML + irsaliye + dolum
+    const [jsonRes, htmlRes, irsRes, dolumRes] = await Promise.allSettled([
         axios.get(`http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}&json=1`, { timeout: 10000 }),
+        axios.get(`http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}`, { timeout: 10000 }),
         axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye&limit=500`, { timeout: 10000 }),
         axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=dolum&limit=500`, { timeout: 10000 })
     ]);
 
-    // JSON parse — sipariş satır detayları (doğrudan yapılandırılmış veri)
+    // ── ADIM 1: İrsaliye no'larını HTML'den her zaman çek ──
+    let htmlContent = '';
+    if (htmlRes.status === 'fulfilled') {
+        htmlContent = String(htmlRes.value.data || '');
+        const irsNolar = [...new Set((htmlContent.match(/(?:KLI|IC|TIS|MTU)\d+/g) || []))];
+        sonuclar.irsNolar = irsNolar;
+        console.log('İrsaliye nolar HTML:', irsNolar);
+    }
+
+    // ── ADIM 2: Sipariş satırlarını JSON'dan dene ──
+    let satirlarBulundu = false;
     if (jsonRes.status === 'fulfilled') {
         const json = jsonRes.value.data;
         console.log('JSON detay ham:', JSON.stringify(json).substring(0, 500));
-
-        // Sipariş satırlarını JSON'dan çek
-        // Olası alan adları: satirlar, siparisDetay, detaylar, rows, items, urunler
-        const satirKaynagi =
-            json?.satirlar ||
-            json?.data?.satirlar ||
-            json?.siparisDetay ||
-            json?.data?.siparisDetay ||
-            json?.detaylar ||
-            json?.data?.detaylar ||
-            json?.rows ||
-            json?.items ||
-            json?.urunler ||
-            null;
-
+        // JSON'dan irsaliye numaralarını da ekle
+        const irsNoKaynagi = json?.irsNolar || json?.data?.irsNolar || json?.irsaliyeNolar || null;
+        if (Array.isArray(irsNoKaynagi) && irsNoKaynagi.length > 0)
+            sonuclar.irsNolar = [...new Set([...sonuclar.irsNolar, ...irsNoKaynagi])];
+        const satirKaynagi = json?.satirlar || json?.data?.satirlar || json?.siparisDetay ||
+            json?.data?.siparisDetay || json?.detaylar || json?.data?.detaylar ||
+            json?.rows || json?.items || json?.urunler || null;
         if (Array.isArray(satirKaynagi) && satirKaynagi.length > 0) {
             const satirlar = satirKaynagi.map(s => {
-                // Olası alan adı varyantlarını destekle
                 const urunAdi     = (s.UrunAdi || s.urunAdi || s.StokAdi || s.stokAdi || s.Aciklama || s.aciklama || '').trim();
                 const sipMiktar   = parseFloat((s.SiparisMiktar || s.siparisMiktar || s.Miktar || s.miktar || s.SipMiktar || '0').toString().replace(',', '.')) || 0;
                 const teslimAlinan= parseFloat((s.TeslimAlinan  || s.teslimAlinan  || s.GelenMiktar || '0').toString().replace(',', '.')) || 0;
                 const gonderilen  = parseFloat((s.GonderilenMiktar || s.gonderilenMiktar || s.GidenMiktar || s.Gonderilen || '0').toString().replace(',', '.')) || 0;
-                const kalanRaw    = parseFloat((s.Kalan || s.kalan || s.KalanMiktar || '0').toString().replace(',', '.')) || 0;
-                const kalanMiktar = Math.abs(kalanRaw);
+                const kalanMiktar = Math.abs(parseFloat((s.Kalan || s.kalan || s.KalanMiktar || '0').toString().replace(',', '.')) || 0);
                 return { urunAdi, sipMiktar, teslimAlinan, gonderilen, kalanMiktar };
             }).filter(s => s.urunAdi && s.sipMiktar > 0);
-
-            console.log('JSON satirlar:', JSON.stringify(satirlar));
-            sonuclar.satirlar = satirlar;
-        } else {
-            // JSON'da satır bulunamadı — HTML fallback ile dene
-            console.log('JSON satır bulunamadı, HTML fallback deneniyor...');
-            try {
-                const htmlRes2 = await axios.get(
-                    `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}`,
-                    { timeout: 10000 }
-                );
-                const html = String(htmlRes2.data || '');
-                const satirlar = [];
-                const trParts = html.split(/<tr[\s>]/i);
-                for (const trPart of trParts) {
-                    const tdValues = [];
-                    // <td ...> veya <td> şeklindeki hücreleri yakala, > sonrasına kadar attribute'ları atla
-                    const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-                    let m;
-                    while ((m = tdRegex.exec(trPart)) !== null) {
-                        const text = m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
-                        tdValues.push(text);
-                    }
-                    // Sipariş satırı: ilk TD sıra numarası (1,2,3...), en az 6 TD olmalı
-                    if (tdValues.length >= 6 && /^\d+$/.test(tdValues[0])) {
-                        const urunAdi    = (tdValues[1] || '').trim();
-                        const sipMiktar  = parseFloat((tdValues[2] || '0').replace(',', '.')) || 0;
-                        const teslimAlinan = parseFloat((tdValues[3] || '0').replace(',', '.')) || 0;
-                        const gonderilen   = parseFloat((tdValues[4] || '0').replace(',', '.')) || 0;
-                        const kalanMiktar  = Math.abs(parseFloat((tdValues[5] || '0').replace(',', '.')) || 0);
-                        if (urunAdi && sipMiktar > 0) {
-                            satirlar.push({ urunAdi, sipMiktar, teslimAlinan, gonderilen, kalanMiktar });
-                        }
-                    }
-                }
-                console.log('HTML fallback satirlar:', JSON.stringify(satirlar));
+            if (satirlar.length > 0) {
+                console.log('JSON satirlar:', JSON.stringify(satirlar));
                 sonuclar.satirlar = satirlar;
-
-                // İrsaliye no listesini HTML'den çek
-                const irsNolar = [...new Set((html.match(/(?:KLI|IC|TIS|MTU)\d+/g) || []))];
-                sonuclar.irsNolar = irsNolar;
-            } catch(e2) {
-                console.log('HTML fallback hatası:', e2.message);
+                satirlarBulundu = true;
             }
         }
+    }
 
-        // İrsaliye numaralarını JSON'dan da çek (varsa)
-        const irsNoKaynagi = json?.irsNolar || json?.data?.irsNolar || json?.irsaliyeNolar || null;
-        if (Array.isArray(irsNoKaynagi)) sonuclar.irsNolar = irsNoKaynagi;
-
-    } else {
-        console.log('JSON API hatası:', jsonRes.reason?.message);
+    // ── ADIM 3: JSON'da satır yoksa HTML'den parse et ──
+    if (!satirlarBulundu && htmlContent) {
+        const satirlar = [];
+        const trParts = htmlContent.split(/<tr[\s>]/i);
+        for (const trPart of trParts) {
+            const tdValues = [];
+            const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+            let m;
+            while ((m = tdRegex.exec(trPart)) !== null) {
+                const text = m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+                tdValues.push(text);
+            }
+            if (tdValues.length >= 6 && /^\d+$/.test(tdValues[0])) {
+                const urunAdi      = (tdValues[1] || '').trim();
+                const sipMiktar    = parseFloat((tdValues[2] || '0').replace(',', '.')) || 0;
+                const teslimAlinan = parseFloat((tdValues[3] || '0').replace(',', '.')) || 0;
+                const gonderilen   = parseFloat((tdValues[4] || '0').replace(',', '.')) || 0;
+                const kalanMiktar  = Math.abs(parseFloat((tdValues[5] || '0').replace(',', '.')) || 0);
+                if (urunAdi && sipMiktar > 0)
+                    satirlar.push({ urunAdi, sipMiktar, teslimAlinan, gonderilen, kalanMiktar });
+            }
+        }
+        console.log('HTML fallback satirlar:', JSON.stringify(satirlar));
+        sonuclar.satirlar = satirlar;
     }
 
     // İrsaliye listesi
@@ -294,7 +275,7 @@ async function icdasSiparisDetayGetir(siparisNo, siparisId) {
         sonuclar.irsaliye = irsRes.value.data;
     }
 
-    // Dolum listesi — devam edenleri bul
+    // Dolum listesi
     if (dolumRes.status === 'fulfilled') {
         const tumDevam = dolumRes.value.data?.data?.dolum?.listeler?.devamEden || [];
         const tumTamam = dolumRes.value.data?.data?.dolum?.listeler?.sonTamamlanan || [];
@@ -392,31 +373,31 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                     });
                 }
 
-                // Teslim edilen irsaliyeler (Kaulas → İçdaş) — bu siparişe ait
-                const irsGelen = (detay.irsaliye?.data?.irsaliye?.listeler?.gelen || [])
-                    .filter(i => (i.Aciklama||'').includes(sipNo));
-                const irsGiden = (detay.irsaliye?.data?.irsaliye?.listeler?.giden || [])
-                    .filter(i => (i.Aciklama||'').includes(sipNo));
+                // ── Sadece TEKERLEK içeren satırları filtrele (jant, segman vb. dışarıda) ──
+                function tekerlerMi(ad) {
+                    return (ad||'').toUpperCase().includes('TEKERLEK');
+                }
 
-                // Teslim edilen ebat bazında (irsaliyelerden hesapla)
-                // İrsaliye satır detayı API'de yok — dolumlardan hesapla
-                // Teslim edilen ≈ tamamlanan dolumlar (sevk edilmiş)
-                const teslimEdilenEbat = {}; // { urunAdi: adet }
-                Object.entries(sipEbat).forEach(([ad, c]) => {
-                    if (c.tamam > 0) teslimEdilenEbat[ad] = c.tamam;
+                // HTML/JSON'dan gelen irsaliye numaraları (KLI... gibi)
+                const irsNolarListesi = detay.irsNolar || [];
+
+                // İrsaliye listesinden bu siparişe ait olanları eşleştir
+                // Önce IrsaliyeNo ile direkt eşleştir, sonra Aciklama ile dene
+                const tumGelen = detay.irsaliye?.data?.irsaliye?.listeler?.gelen || [];
+                const tumGiden = detay.irsaliye?.data?.irsaliye?.listeler?.giden || [];
+
+                const irsGelen = tumGelen.filter(i => {
+                    const no = (i.IrsaliyeNo || '');
+                    return irsNolarListesi.includes(no) ||
+                           (i.Aciklama||'').includes(sipNo) ||
+                           (i.SiparisNo||'') === sipNo;
                 });
-
-                // Kalan = Sipariş - Teslim Edilen
-                const kalanEbat = {};
-                Object.entries(siparisEbat).forEach(([ad, sip]) => {
-                    const edilen = teslimEdilenEbat[ad] || 0;
-                    if (sip - edilen > 0) kalanEbat[ad] = sip - edilen;
+                const irsGiden = tumGiden.filter(i => {
+                    const no = (i.IrsaliyeNo || '');
+                    return irsNolarListesi.includes(no) ||
+                           (i.Aciklama||'').includes(sipNo) ||
+                           (i.SiparisNo||'') === sipNo;
                 });
-
-                const tumUrunler = [...new Set([
-                    ...Object.keys(siparisEbat),
-                    ...Object.keys(teslimAlinanEbat)
-                ])];
 
                 // ── Mesaj oluştur ──
                 let dm = `📋 *Sipariş Detayı*\n\n`;
@@ -424,7 +405,8 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 dm += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
                 dm += `*Durum:* ${bulunan.DurumEtiket}\n`;
 
-                const tumUrunler2 = Object.keys(siparisEbat);
+                // Sadece TEKERLEK olan ürünleri al
+                const tumUrunler2 = Object.keys(siparisEbat).filter(tekerlerMi);
 
                 // 1) Sipariş Edilen
                 dm += `\n📋 *Sipariş Edilen:*\n`;
@@ -436,26 +418,31 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
                 // 2) Teslim Alınan
                 dm += `\n📥 *Teslim Alınan:*\n`;
-                if (Object.keys(teslimAlinanEB).length) {
-                    Object.entries(teslimAlinanEB).forEach(([ad, adet]) => { dm += `• ${ad} - ${adet} Adet\n`; });
+                const teslimAlinanTekerlek = Object.entries(teslimAlinanEB).filter(([ad]) => tekerlerMi(ad));
+                if (teslimAlinanTekerlek.length) {
+                    teslimAlinanTekerlek.forEach(([ad, adet]) => { dm += `• ${ad} - ${adet} Adet\n`; });
                 } else {
                     dm += `• ${bulunan.TeslimAlinan} Adet\n`;
                 }
 
                 // 3) Teslim Edilen
                 dm += `\n📤 *Teslim Edilen:*\n`;
-                if (Object.keys(teslimEdilenEB).length) {
-                    Object.entries(teslimEdilenEB).forEach(([ad, adet]) => { dm += `• ${ad} - ${adet} Adet\n`; });
+                const teslimEdilenTekerlek = Object.entries(teslimEdilenEB).filter(([ad]) => tekerlerMi(ad));
+                if (teslimEdilenTekerlek.length) {
+                    teslimEdilenTekerlek.forEach(([ad, adet]) => { dm += `• ${ad} - ${adet} Adet\n`; });
                 } else {
                     dm += `• ${bulunan.SevkEdilen} Adet\n`;
                 }
 
                 // 4) Kalan Sipariş
                 dm += `\n⏳ *Kalan Sipariş:*\n`;
-                if (Object.keys(kalanEB).length) {
-                    Object.entries(kalanEB).forEach(([ad, adet]) => { if (adet > 0) dm += `• ${ad} - ${adet} Adet\n`; });
-                } else {
+                const kalanTekerlek = Object.entries(kalanEB).filter(([ad]) => tekerlerMi(ad));
+                if (kalanTekerlek.length) {
+                    kalanTekerlek.forEach(([ad, adet]) => { if (adet > 0) dm += `• ${ad} - ${adet} Adet\n`; });
+                } else if (kalan > 0) {
                     dm += `• ${kalan} Adet\n`;
+                } else {
+                    dm += `• Yok\n`;
                 }
 
                 // 5) Teslim Alınan İrsaliyeler (İçdaş → Kaulas)
@@ -473,6 +460,14 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                     irsGiden.forEach(i => {
                         dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)}\n`;
                         dm += `  ${i.ToplamMiktar} adet\n`;
+                    });
+                }
+
+                // 7) İrsaliye hiç bulunamadıysa ama irsNolar listesi varsa — direkt göster
+                if (!irsGelen.length && !irsGiden.length && irsNolarListesi.length) {
+                    dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
+                    irsNolarListesi.forEach(no => {
+                        dm += `• ${no}\n`;
                     });
                 }
 
