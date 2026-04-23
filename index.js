@@ -173,52 +173,84 @@ async function icdasVeriCek(section = 'all', q = null) {
 async function icdasCevapla(sender, message, yetkiliAdi) {
     console.log('🏭 İçdaş modu aktif');
 
-    // Mesaja göre hangi section çekileceğini belirle
     const msgU = message.toUpperCase()
         .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
         .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
 
-    let section = 'all';
-    let q = null;
+    // KD-, SIP-, IRS- gibi kod varsa tekil arama yap
+    const kodMatch = message.match(/(KD-\d+|SIP-\d+|IRS-\d+|PKT-\d+)/i);
 
-    if (/DOLUM|JEL|KAUCUK|LASTIK/.test(msgU)) section = 'dolum';
-    else if (/PAKET|AMBALAJ/.test(msgU)) section = 'paketleme';
-    else if (/SIPARIS|SİPARİŞ|SIPARI/.test(msgU)) section = 'siparis';
-    else if (/IRSALIYE|İRSALİYE|SEVK|TESLIMAT/.test(msgU)) section = 'irsaliye';
-    else if (/STOK|KALAN|ENVANTER/.test(msgU)) section = 'stok';
+    let veriSiparis = null, veriDolum = null, veriIrsaliye = null, veriStok = null, veriGenel = null, veriArama = null;
 
-    // KD-, SIP-, IRS- gibi kod varsa arama yap
-    const kodMatch = message.match(/\b(KD-\d+|SIP-\d+|IRS-\d+|PKT-\d+|[A-Z]{2,5}\d{6,})\b/i);
-    if (kodMatch) { q = kodMatch[0]; section = 'all'; }
-
-    const veri = await icdasVeriCek(section, q);
+    if (kodMatch) {
+        // Tekil kod araması — tüm modüllerde arar
+        veriArama = await icdasVeriCek('all', kodMatch[0]);
+    } else if (/SIPARIS|SIPARI|LASTIK.*ADET|KACT.*LASTIK|KACT.*TEKER|TEKER.*ADET/.test(msgU)) {
+        // Sipariş sorusu — sipariş detaylarını VE dolumları paralel çek
+        [veriSiparis, veriDolum] = await Promise.all([
+            icdasVeriCek('siparis'),
+            icdasVeriCek('dolum')
+        ]);
+    } else if (/IRSALIYE|SEVK|TESLIMAT|GELEN|GIDEN/.test(msgU)) {
+        [veriIrsaliye, veriDolum] = await Promise.all([
+            icdasVeriCek('irsaliye'),
+            icdasVeriCek('dolum')
+        ]);
+    } else if (/DOLUM|JEL|KAUCUK/.test(msgU)) {
+        veriDolum = await icdasVeriCek('dolum');
+    } else if (/PAKET|AMBALAJ/.test(msgU)) {
+        veriGenel = await icdasVeriCek('paketleme');
+    } else if (/STOK|KALAN|ENVANTER/.test(msgU)) {
+        veriStok = await icdasVeriCek('stok');
+    } else {
+        // Genel soru — hepsini çek (özet için yeterli)
+        veriGenel = await icdasVeriCek('all');
+    }
 
     const selamAdi = yetkiliAdi ? ` ${yetkiliAdi.split(' ')[0]}` : '';
-    
-    // İlk mesaj mı?
     const ilkMesaj = ilkMesajMi(sender);
+
+    // Veriyi birleştir
+    const veriBlok = JSON.stringify({
+        arama: veriArama?.arama || null,
+        siparis: veriSiparis?.data?.siparis || null,
+        siparisDetaylari: veriSiparis?.data?.siparis?.listeler || null,
+        dolum: veriDolum?.data?.dolum || null,
+        irsaliye: veriIrsaliye?.data?.irsaliye || null,
+        stok: veriStok?.data?.stok || null,
+        paketleme: veriGenel?.data?.paketleme || null,
+        genelOzet: veriGenel?.genelOzet || null,
+    });
 
     const prompt = `Sen Erdemli Kauçuk firmasının WhatsApp asistanısın - adın RobERD.
 Şu an İÇDAŞ ÇELİK ENERJİ TERSANE VE ULAŞIM SANAYİ firmasından${selamAdi ? selamAdi + " adlı yetkili ile" : ""} konuşuyorsun.
 
-${ilkMesaj ? `Bu konuşmanın İLK mesajıdır. "Merhaba${selamAdi}! Size nasıl yardımcı olabilirim?" diyerek sıcak bir karşılama yap.` : `Bu devam eden bir konuşmadır. Tekrar tanıtım YAPMA, doğrudan soruyu yanıtla.`}
+${ilkMesaj ? `Bu konuşmanın İLK mesajıdır. "Merhaba${selamAdi}! Size nasıl yardımcı olabilirim?" diyerek kısa ve sıcak karşıla.` : `Devam eden konuşma — tekrar tanıtım YAPMA, doğrudan soruyu yanıtla.`}
 
-KAUPAN SİSTEM VERİSİ (İçdaş'a ait güncel veriler):
-${JSON.stringify(veri, null, 0)}
+SİSTEM VERİSİ:
+${veriBlok}
+
+VERİ AÇIKLAMALARI:
+- siparis.listeler.acik → açık/kısmi siparişler (SiparisDurumu 1=Yeni, 2=Kısmi)
+- siparis.listeler.acik[].SatirSayisi → kaç farklı ürün kalemi var
+- siparis.listeler.acik[].ToplamMiktar / TeslimAlinan / SevkEdilen → adet bilgileri
+- dolum.listeler.devamEden → şu an dolumda olan lastikler (EbatKodu = lastik ölçüsü)
+- dolum.listeler.sonTamamlanan → son tamamlanan dolumlar (EbatKodu, BosAgirlik, DoluAgirlik)
+- irsaliye.listeler.gelen / giden → gelen ve giden irsaliyeler
+- arama → belirli bir kod (KD-, SIP-, IRS-) sorgulandığında sonuç
+- stok.listeler.aktif → lastik stok kartları (Kod, StokIsmi, Kalan adet)
 
 MÜŞTERİNİN MESAJI: "${message}"
 
 YANIT KURALLARI:
-1. Doğal ve samimi bir dil kullan, robot gibi değil.
-2. Sorduğu konuya göre ilgili veriyi özetle — hepsini listeleme, sadece önemli olanı söyle.
-3. Dolum sorusunda: devam eden dolumlar, tamamlananlar, durum etiketlerini belirt.
-4. Sipariş sorusunda: açık siparişler, kısmi/yeni ayrımı, toplam/teslim/kalan miktarları belirt.
-5. Stok sorusunda: aktif kart sayısı, toplam kalan, sıfır stoklu ürün sayısını belirt.
-6. İrsaliye sorusunda: gelen/giden/hurda ayrımı ve bu ayki rakamları belirt.
-7. Genel durum sorusunda: genelOzet'i kullanarak kısa bir özet ver.
-8. Kod numarası sorulduysa (KD-, SIP-, IRS-) arama sonucunu kullan.
-9. Bilgi yoksa veya API boş döndüyse: "Şu an sisteme ulaşamıyorum, lütfen tekrar deneyin."
-10. Kısa, net, profesyonel Türkçe kullan.`;
+1. Doğal ve samimi konuş — robot gibi değil.
+2. Lastik ölçüsü sorusunda (1200-20, 1200-24 vb.): dolum listesindeki EbatKodu ve EbatAdi alanlarını tara, her ölçüden kaç adet olduğunu say ve listele.
+3. Sipariş detayı sorusunda: açık sipariş listesindeki ToplamMiktar, TeslimAlinan, SevkEdilen ve Kalan (=Toplam-Teslim) değerlerini hesapla ve göster.
+4. "Kaç tane geldi/gitti" sorusunda: irsaliye listesini kullan, ebat bazında say.
+5. Genel durum sorusunda: genelOzet'ten kısa özet ver.
+6. Kod sorgusunda: arama.sonuc içinden ilgili kaydı bul ve durumunu anlat.
+7. Veri yoksa veya null ise: "Şu an sisteme ulaşamıyorum, lütfen tekrar deneyin."
+8. Kısa, net, profesyonel Türkçe. Gereksiz tekrar yapma.`;
 
     const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
     const result = await model.generateContent(prompt);
