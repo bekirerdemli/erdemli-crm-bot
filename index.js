@@ -138,6 +138,28 @@ function splitRow(line, sep = ',') {
 // ═══════════════════════════════════════════════════════════════
 // İÇDAŞ ENTEGRASYONu — Kaupan API
 // ═══════════════════════════════════════════════════════════════
+const icdasSession = new Map(); // sender → { state, timestamp }
+
+const ICDAS_MENU = `Merhaba! 👋 Kaulas Lastik olarak İÇDAŞ ÇELİK ENERJİ sistemine hoş geldiniz.
+
+Aşağıdaki konularda size yardımcı olabilirim:
+
+1️⃣ Açık Sipariş Listele
+2️⃣ Kapalı Sipariş Listele
+3️⃣ Envanter Stok Kontrolü
+4️⃣ İrsaliye Kontrolü
+5️⃣ Tekerlek Dolum Detayı Sorgulama
+
+Lütfen ilgili numarayı yazınız.`;
+
+const ICDAS_GECERSIZ = `Bu konuda yardımcı olma yetkim bulunmuyor. 
+Lütfen yukarıdaki menüden bir seçenek yazınız (1-5).`;
+
+const ICDAS_ISRAR = `Anladım, konuyu ilgili yetkiliye bildiriyorum. En kısa sürede size dönüş yapacaklar. 
+Görüşmemiz sonlanmıştır. Tekrar bağlanmak için herhangi bir mesaj yazabilirsiniz.`;
+
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 const ICDAS_API = 'http://84.44.77.42:3939/kaulas/api_kaupan_info.php';
 const ICDAS_ANAHTAR_KELIMELER = ['İÇDAŞ', 'ICDAS', 'İCDAŞ', 'IÇDAŞ'];
 
@@ -192,196 +214,213 @@ async function icdasSiparisDetay(siparisId) {
 async function icdasCevapla(sender, message, yetkiliAdi) {
     console.log('🏭 İçdaş modu aktif');
 
-    const msgU = message.toUpperCase()
-        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
-        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
-
-    // KD-, SIP-, IRS- gibi kod varsa tekil arama yap
-    const kodMatch = message.match(/(KD-\d+|SIP-\d+|IRS-\d+|PKT-\d+)/i);
-
-    let veriSiparis = null, veriDolum = null, veriIrsaliye = null, veriStok = null, veriGenel = null, veriArama = null;
-
-    if (kodMatch) {
-        // Tekil kod araması — tüm modüllerde arar
-        veriArama = await icdasVeriCek('all', kodMatch[0]);
-    } else if (/SIPARIS|SIPARI|LASTIK|TEKER|ADET|KAC TAN|KACT|\d{3,4}[-\/]\d{2,3}/.test(msgU)) {
-        // Sipariş sorusu — hepsini paralel çek
-        [veriSiparis, veriIrsaliye, veriStok, veriDolum] = await Promise.all([
-            icdasVeriCek('siparis', null, 500),
-            icdasVeriCek('irsaliye', null, 500),
-            icdasVeriCek('stok', null, 500),
-            icdasVeriCek('dolum', null, 500)
-        ]);
-        // Açık siparişlerin ID'leriyle detay satırlarını da çek
-        const acikSiparisler = veriSiparis?.data?.siparis?.listeler?.acik || [];
-        const tumSiparisler = [
-            ...acikSiparisler,
-            ...(veriSiparis?.data?.siparis?.listeler?.sonTamamlanan || [])
-        ];
-        if (tumSiparisler.length > 0) {
-            // İlk 3 siparişin detayını çek (paralel)
-            const detayPromises = tumSiparisler.slice(0, 3).map(s => 
-                icdasSiparisDetay(s.Id).catch(() => null)
-            );
-            const detaylar = await Promise.all(detayPromises);
-            veriSiparis._detaylar = detaylar.filter(Boolean);
-            console.log(`📋 ${detaylar.filter(Boolean).length} sipariş detayı çekildi`);
-        }
-    } else if (/IRSALIYE|SEVK|TESLIMAT|GELEN|GIDEN/.test(msgU)) {
-        [veriIrsaliye, veriDolum] = await Promise.all([
-            icdasVeriCek('irsaliye'),
-            icdasVeriCek('dolum')
-        ]);
-    } else if (/DOLUM|JEL|KAUCUK/.test(msgU)) {
-        veriDolum = await icdasVeriCek('dolum');
-    } else if (/PAKET|AMBALAJ/.test(msgU)) {
-        veriGenel = await icdasVeriCek('paketleme');
-    } else if (/STOK|KALAN|ENVANTER/.test(msgU)) {
-        veriStok = await icdasVeriCek('stok');
-    } else {
-        // Genel soru — hepsini çek (özet için yeterli)
-        veriGenel = await icdasVeriCek('all');
-    }
-
     const selamAdi = yetkiliAdi ? ` ${yetkiliAdi.split(' ')[0]}` : '';
-    const ilkMesaj = ilkMesajMi(sender);
+    const ses = icdasSession.get(sender) || { state: 'menu', timestamp: Date.now() };
 
-    // Veriyi birleştir — null gelirse fallback olarak all çek
-    let veriBlok;
-    try {
-        // Eğer sipariş verisi bekleniyor ama gelmemişse tekrar dene
-        if (!veriSiparis && !veriDolum && !veriIrsaliye && !veriStok && !veriGenel && !veriArama) {
-            console.log('⚠️ Tüm veriler null — fallback: all çekiliyor');
-            veriGenel = await icdasVeriCek('all');
-        }
-        // ── Dolum listesinden ebat bazlı sayım ──
-        const dolumTumListe = [
-            ...(veriDolum?.data?.dolum?.listeler?.devamEden || []),
-            ...(veriDolum?.data?.dolum?.listeler?.sonTamamlanan || [])
-        ];
-        const dolumEbatSayim = {};
-        dolumTumListe.forEach(d => {
-            const ebat = (d.EbatKodu || d.EbatAdi || 'Bilinmeyen').trim();
-            dolumEbatSayim[ebat] = (dolumEbatSayim[ebat] || 0) + 1;
-        });
+    // Mesaj normalizasyonu
+    const msgTemiz = message.trim();
+    const msgSayi = msgTemiz.match(/^[1-5]$/)?.[0];
 
-        // ── İrsaliye hareketlerinden ebat bazlı giriş/çıkış hesabı ──
-        const irsaliyeTumListe = [
-            ...(veriIrsaliye?.data?.irsaliye?.listeler?.gelen || []),
-            ...(veriIrsaliye?.data?.irsaliye?.listeler?.giden || [])
-        ];
-        
-        // Stok listesinden ebat bazlı kalan hesabı
-        const stokListesi = veriStok?.data?.stok?.listeler?.aktif || [];
-        const stokEbatDurum = {};
-        stokListesi.forEach(s => {
-            const ad = (s.StokIsmi || s.Kod || '').trim();
-            stokEbatDurum[ad] = {
-                kod: s.Kod,
-                giris: s.Giris,
-                cikis: s.Cikis,
-                kalan: s.Kalan
-            };
-        });
-
-        const siparisListesi = veriSiparis?.data?.siparis?.listeler || {};
-
-        // TEKERLEK olan stok satırlarını filtrele — AI'ya sade veri gönder
-        const tekerStok = stokListesi.filter(s => 
-            (s.StokIsmi || '').toUpperCase().includes('TEKERLEK') ||
-            (s.StokIsmi || '').match(/\d{3,4}[-\/]\d{2,3}/)
-        );
-
-        veriBlok = JSON.stringify({
-            arama: veriArama?.arama || null,
-
-            // Sipariş özeti
-            siparisOzet: veriSiparis?.data?.siparis?.ozet || null,
-            siparisAcik: siparisListesi?.acik || [],
-            siparissOnTamamlanan: siparisListesi?.sonTamamlanan || [],
-            siparisDetaylar: veriSiparis?._detaylar || [],  // Her siparişin ürün satırları
-
-            // Stok: ebat bazlı giriş/çıkış/kalan (PDF'deki "Gelen Stok Özeti" buradan)
-            stokEbatDurum: stokEbatDurum,
-            stokTumListe: stokListesi,
-            tekerStokOzet: tekerStok,  // Sadece tekerlek olan satırlar — EBAT KIRILIMININI BURADAN OKU
-
-            // İrsaliye hareketleri (gelen/giden)
-            irsaliyeGelen: veriIrsaliye?.data?.irsaliye?.listeler?.gelen || [],
-            irsaliyeGiden: veriIrsaliye?.data?.irsaliye?.listeler?.giden || [],
-            irsaliyeOzet: veriIrsaliye?.data?.irsaliye?.ozet || null,
-
-            // Dolum: ebat bazlı sayım + detay listeler
-            dolumEbatSayim: dolumEbatSayim,
-            dolumDevamEden: veriDolum?.data?.dolum?.listeler?.devamEden || [],
-            dolumSonTamamlanan: veriDolum?.data?.dolum?.listeler?.sonTamamlanan || [],
-            dolumOzet: veriDolum?.data?.dolum?.ozet || null,
-
-            paketleme: veriGenel?.data?.paketleme || null,
-            genelOzet: veriGenel?.genelOzet || null,
-        });
-    } catch(e) {
-        console.error('Veri birleştirme hatası:', e.message);
-        veriBlok = JSON.stringify({ hata: 'Veri işlenemedi' });
+    // ── SONLANDIRILMIŞ görüşme — yeni mesajda menüye dön ──
+    if (ses.state === 'bitti') {
+        icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+        await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba! 👋', `Tekrar hoş geldiniz${selamAdi}! 👋`));
+        return;
     }
 
-    const prompt = `Sen Kaulas Lastik firmasının WhatsApp asistanısın - adın RobERD.
-Şu an İÇDAŞ ÇELİK ENERJİ TERSANE VE ULAŞIM SANAYİ firmasından${selamAdi ? selamAdi + " adlı yetkili ile" : ""} konuşuyorsun.
+    // ── MENÜ bekleniyor ──
+    if (ses.state === 'menu' || ses.state === 'israr') {
+        if (!msgSayi) {
+            // İlk gelişte menü göster
+            if (ilkMesajMi(sender)) {
+                icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+                await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+                return;
+            }
+            // Geçersiz giriş — israr sayacı
+            const israrSayisi = (ses.israr || 0) + 1;
+            if (israrSayisi >= 2) {
+                // 2. kez geçersiz — yetkili bildirimi + sonlandır
+                icdasSession.set(sender, { state: 'bitti', timestamp: Date.now() });
+                await whatsappGonder(sender, ICDAS_ISRAR);
+                // Yetkili bildirimi gönder
+                const YETKILI_NO = '905550161600';
+                await whatsappGonder(YETKILI_NO, 
+                    `⚠️ İÇDAŞ bildirimi\n\nNumara: +${sender}\nMesaj: "${msgTemiz}"\n\nMenü dışı soru sormaya ısrar etti, görüşme sonlandırıldı.`
+                );
+                return;
+            }
+            icdasSession.set(sender, { state: 'menu', israr: israrSayisi, timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_GECERSIZ + '\n\n1️⃣ Açık Sipariş Listele\n2️⃣ Kapalı Sipariş Listele\n3️⃣ Envanter Stok Kontrolü\n4️⃣ İrsaliye Kontrolü\n5️⃣ Tekerlek Dolum Detayı Sorgulama');
+            return;
+        }
+        // Geçerli seçim
+        icdasSession.set(sender, { state: 'islem_' + msgSayi, timestamp: Date.now() });
+        await icdasIslemYap(sender, msgSayi, selamAdi);
+        return;
+    }
 
-${ilkMesaj ? `Bu konuşmanın İLK mesajıdır. "Merhaba${selamAdi}! Size nasıl yardımcı olabilirim?" diyerek kısa ve sıcak karşıla.` : `Devam eden konuşma — tekrar tanıtım YAPMA, doğrudan soruyu yanıtla.`}
+    // ── İLK mesaj — menüyü göster ──
+    if (ilkMesajMi(sender)) {
+        icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+        await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+        return;
+    }
 
-SİSTEM VERİSİ:
-${veriBlok}
+    // ── İşlem yapıldı, yeni mesaj geldi — geçerli seçim mi? ──
+    if (msgSayi) {
+        icdasSession.set(sender, { state: 'islem_' + msgSayi, timestamp: Date.now() });
+        await icdasIslemYap(sender, msgSayi, selamAdi);
+    } else {
+        // Geçersiz — menüye yönlendir
+        const israrSayisi = (ses.israr || 0) + 1;
+        if (israrSayisi >= 2) {
+            icdasSession.set(sender, { state: 'bitti', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_ISRAR);
+            const YETKILI_NO = '905550161600';
+            await whatsappGonder(YETKILI_NO,
+                `⚠️ İÇDAŞ bildirimi\n\nNumara: +${sender}\nMesaj: "${msgTemiz}"\n\nMenü dışı soru sormaya ısrar etti, görüşme sonlandırıldı.`
+            );
+            return;
+        }
+        icdasSession.set(sender, { state: 'menu', israr: israrSayisi, timestamp: Date.now() });
+        await whatsappGonder(sender, ICDAS_GECERSIZ + '\n\n1️⃣ Açık Sipariş Listele\n2️⃣ Kapalı Sipariş Listele\n3️⃣ Envanter Stok Kontrolü\n4️⃣ İrsaliye Kontrolü\n5️⃣ Tekerlek Dolum Detayı Sorgulama');
+    }
+}
 
-VERİ AÇIKLAMALARI:
-- siparisAcik[] → Açık siparişler. Alanlar: SiparisNo, Id, ToplamMiktar, TeslimAlinan, SevkEdilen, SatirSayisi. Kalan = ToplamMiktar - TeslimAlinan
-- siparisDetaylar[] → Her siparişin ürün satır detayları. İçinde UrunAdi/StokAdi, SiparisMiktari, TeslimAlinan, Kalan gibi alanlar olabilir — EBAT BAZLI MİKTAR BURADAN OKUNUR
-- tekerStokOzet[] → SADECE TEKERLEK stok satırları: {StokIsmi, Giris, Cikis, Kalan} — SİPARİŞ SORULARINDA BU ALANI KULLAN
-- stokEbatDurum → Ebat bazlı stok durumu: {StokAdı: {giris, cikis, kalan}}. PDF'deki "Gelen Stok Özeti" buradan okunur
-- stokTumListe[] → Tüm stok kartları: Kod, StokIsmi, Giris, Cikis, Kalan
-- irsaliyeGiden[] → Gönderilen irsaliyeler (sevkiyatlar). Sipariş bazlı gönderilen miktarlar burada
-- irsaliyeGelen[] → Teslim alınan irsaliyeler
-- dolumEbatSayim → {"1200-20 TEKERLEK": 45, "1200-24 TEKERLEK": 73} hazır ebat sayımı
-- dolumDevamEden[] → Devam eden dolumlar (EbatKodu, DolumDurumu, SiparisNo)
-- dolumSonTamamlanan[] → Tamamlanan dolumlar (EbatKodu)
-- arama → KD-, SIP-, IRS- kod sorgusu sonucu
+async function icdasIslemYap(sender, secim, selamAdi) {
+    let mesaj = '';
+    
+    try {
+        switch(secim) {
+            case '1': { // Açık Siparişler
+                const [vS, vSt] = await Promise.all([
+                    icdasVeriCek('siparis', null, 500),
+                    icdasVeriCek('stok', null, 500)
+                ]);
+                const acik = vS?.data?.siparis?.listeler?.acik || [];
+                const stokListe = vSt?.data?.stok?.listeler?.aktif || [];
+                const tekerler = stokListe.filter(s => (s.StokIsmi||'').toUpperCase().includes('TEKERLEK'));
+                
+                if (!acik.length) {
+                    mesaj = '✅ Şu an açık bekleyen siparişiniz bulunmuyor.';
+                } else {
+                    mesaj = '📦 *Açık Siparişler*\n\n';
+                    acik.forEach(s => {
+                        const kalan = (parseFloat(s.ToplamMiktar)||0) - (parseFloat(s.TeslimAlinan)||0);
+                        mesaj += `*Sipariş No:* ${s.SiparisNo}\n`;
+                        mesaj += `*Tarih:* ${(s.SiparisTarihi||'').substring(0,10)}\n`;
+                        mesaj += `*Toplam:* ${s.ToplamMiktar} adet\n`;
+                        mesaj += `*Teslim Alınan:* ${s.TeslimAlinan} adet\n`;
+                        mesaj += `*Sevk Edilen:* ${s.SevkEdilen} adet\n`;
+                        mesaj += `*Kalan:* ${kalan} adet\n`;
+                        mesaj += `*Durum:* ${s.DurumEtiket}\n`;
+                    });
+                    if (tekerler.length) {
+                        mesaj += '\n*📊 Ürün Bazlı Durum:*\n';
+                        tekerler.forEach(t => {
+                            mesaj += `• ${t.StokIsmi}: Gelen ${t.Giris||0} | Giden ${t.Cikis||0} | Kalan ${t.Kalan||0}\n`;
+                        });
+                    }
+                }
+                break;
+            }
+            case '2': { // Kapalı Siparişler
+                const vS = await icdasVeriCek('siparis', null, 500);
+                const kapali = vS?.data?.siparis?.listeler?.sonTamamlanan || [];
+                const ozet = vS?.data?.siparis?.ozet || {};
+                mesaj = '✅ *Kapalı Sipariş Özeti*\n\n';
+                mesaj += `Tamamlanan: ${ozet.tamamlandi || 0} sipariş\n`;
+                mesaj += `İptal: ${ozet.iptal || 0} sipariş\n\n`;
+                if (kapali.length) {
+                    mesaj += '*Son Tamamlananlar:*\n';
+                    kapali.slice(0,5).forEach(s => {
+                        mesaj += `• ${s.SiparisNo} — ${(s.SiparisTarihi||'').substring(0,10)} — ${s.ToplamMiktar} adet\n`;
+                    });
+                }
+                break;
+            }
+            case '3': { // Envanter Stok
+                const vSt = await icdasVeriCek('stok', null, 500);
+                const stokListe = vSt?.data?.stok?.listeler?.aktif || [];
+                const ozet = vSt?.data?.stok?.ozet || {};
+                mesaj = '📊 *Envanter / Stok Durumu*\n\n';
+                mesaj += `Aktif Kart: ${ozet.aktifKart || 0}\n`;
+                mesaj += `Toplam Kalan: ${ozet.toplamKalan || 0}\n`;
+                mesaj += `Sıfır Stoklu: ${ozet.sifirStoklu || 0}\n\n`;
+                const tekerler = stokListe.filter(s => (s.StokIsmi||'').toUpperCase().includes('TEKERLEK'));
+                if (tekerler.length) {
+                    mesaj += '*Tekerlek Stok Detayı:*\n';
+                    tekerler.forEach(t => {
+                        mesaj += `• ${t.StokIsmi}\n  Giriş: ${t.Giris||0} | Çıkış: ${t.Cikis||0} | Kalan: ${t.Kalan||0}\n`;
+                    });
+                }
+                break;
+            }
+            case '4': { // İrsaliye
+                const vI = await icdasVeriCek('irsaliye', null, 500);
+                const ozet = vI?.data?.irsaliye?.ozet || {};
+                const gidenler = vI?.data?.irsaliye?.listeler?.giden || [];
+                const gelenler = vI?.data?.irsaliye?.listeler?.gelen || [];
+                mesaj = '🚛 *İrsaliye Durumu*\n\n';
+                mesaj += `Gelen: ${ozet.gelen || 0} irsaliye\n`;
+                mesaj += `Giden: ${ozet.giden || 0} irsaliye\n`;
+                mesaj += `Bu Ay Gelen: ${ozet.gelenBuAy || 0} | Giden: ${ozet.gidenBuAy || 0}\n\n`;
+                if (gidenler.length) {
+                    mesaj += '*Son Gönderimler:*\n';
+                    gidenler.slice(0,5).forEach(i => {
+                        mesaj += `• ${i.IrsaliyeNo} — ${(i.IrsaliyeTarihi||'').substring(0,10)} — ${i.ToplamMiktar} adet\n`;
+                    });
+                }
+                if (gelenler.length) {
+                    mesaj += '\n*Son Teslim Alımlar:*\n';
+                    gelenler.slice(0,5).forEach(i => {
+                        mesaj += `• ${i.IrsaliyeNo} — ${(i.IrsaliyeTarihi||'').substring(0,10)} — ${i.ToplamMiktar} adet\n`;
+                    });
+                }
+                break;
+            }
+            case '5': { // Dolum Detay
+                const vD = await icdasVeriCek('dolum', null, 500);
+                const ozet = vD?.data?.dolum?.ozet || {};
+                const devamEden = vD?.data?.dolum?.listeler?.devamEden || [];
+                const tamamlanan = vD?.data?.dolum?.listeler?.sonTamamlanan || [];
+                // Ebat bazlı say
+                const ebatSayim = {};
+                [...devamEden, ...tamamlanan].forEach(d => {
+                    const ebat = (d.EbatKodu || d.EbatAdi || 'Bilinmeyen').trim();
+                    if (!ebatSayim[ebat]) ebatSayim[ebat] = { devam: 0, tamam: 0 };
+                    if (devamEden.includes(d)) ebatSayim[ebat].devam++;
+                    else ebatSayim[ebat].tamam++;
+                });
+                mesaj = '🔧 *Tekerlek Dolum Detayı*\n\n';
+                mesaj += `Toplam Aktif: ${ozet.toplamAktif || 0}\n`;
+                mesaj += `Devam Eden: ${ozet.devamEden || 0}\n`;
+                mesaj += `Tamamlanan: ${ozet.tamamlanan || 0}\n\n`;
+                if (Object.keys(ebatSayim).length) {
+                    mesaj += '*Ebat Bazlı Dağılım:*\n';
+                    Object.entries(ebatSayim).forEach(([ebat, c]) => {
+                        mesaj += `• ${ebat}: Devam ${c.devam} | Tamamlanan ${c.tamam}\n`;
+                    });
+                }
+                if (devamEden.length) {
+                    mesaj += '\n*Devam Eden Dolumlar:*\n';
+                    devamEden.slice(0,5).forEach(d => {
+                        mesaj += `• ${d.Kod} — ${d.EbatAdi} — ${d.DurumEtiket}\n`;
+                    });
+                }
+                break;
+            }
+        }
+    } catch(e) {
+        console.error('İçdaş işlem hatası:', e.message);
+        mesaj = 'Sisteme şu an ulaşamıyorum, lütfen tekrar deneyin.';
+    }
 
-MÜŞTERİNİN MESAJI: "${message}"
-
-YANIT KURALLARI:
-1. Doğal ve samimi konuş — robot gibi değil.
-
-2. SİPARİŞ DETAYI sorusunda (açık sipariş, ürün detayları, ne geldi ne gitti):
-   A) siparisAcik listesinden genel özeti ver: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen
-   B) MUTLAKA stokTumListe'den ebat bazlı kırılımı da ver:
-      → stokTumListe içindeki her satır için: StokIsmi, Giris (bize gelen), Cikis (biz gönderdik), Kalan
-      → Sadece TEKERLEK içeren satırları göster (JANT, SEGMAN satırlarını atlayabilirsin)
-      → Format: "• 1200-20 TEKERLEK: Gelen 46 adet | Giden 41 adet | Kalan 5 adet"
-      → Format: "• 1200-24 TEKERLEK: Gelen 72 adet | Giden 72 adet | Kalan 0 adet"
-   C) siparisDetaylar varsa oradan da ek bilgi ekle
-
-3. EBAT BAZLI MİKTAR sorusunda (kaç tane 1200-20, kaç tane 1200-24):
-   → stokTumListe içinde TEKERLEK geçen satırları bul ve listele
-   → Giris = teslim alınan, Cikis = gönderilen, Kalan = stokta kalan
-   → AYRICA dolumEbatSayim'den dolum adetlerini de ekle
-
-4. GELEN/GİDEN İRSALİYE sorusunda:
-   → irsaliyeGiden ve irsaliyeGelen listelerini kullan, tarih ve miktar bilgisini ver
-
-5. DOLUM DURUMU sorusunda:
-   → dolumEbatSayim ve dolumDevamEden listelerini kullan
-
-6. Genel durum sorusunda: genelOzet'ten kısa özet ver.
-7. Kod sorgusunda (KD-, SIP-): arama sonucunu kullan.
-8. Veri null/boş ise: "Bu bilgiye şu an ulaşamıyorum" de.
-9. Kısa, net, profesyonel Türkçe. Gereksiz tekrar yapma.`;
-
-    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
-    const result = await model.generateContent(prompt);
-    const cevap = result.response.text();
-
-    await whatsappGonder(sender, cevap);
-    console.log(`✅ İçdaş cevap gönderildi -> ${sender}`);
+    mesaj += '\n\n─────────────────\nBaşka bir işlem için numara yazınız:\n1️⃣ Açık Sipariş  2️⃣ Kapalı Sipariş\n3️⃣ Stok  4️⃣ İrsaliye  5️⃣ Dolum';
+    await whatsappGonder(sender, mesaj);
+    icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+    console.log(`✅ İçdaş seçim ${secim} işlendi -> ${sender}`);
 }
 
 async function fetchAllData() {
