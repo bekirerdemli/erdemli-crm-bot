@@ -186,9 +186,11 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         // Tekil kod araması — tüm modüllerde arar
         veriArama = await icdasVeriCek('all', kodMatch[0]);
     } else if (/SIPARIS|SIPARI|LASTIK|TEKER|ADET|KAC TAN|KACT|\d{3,4}[-\/]\d{2,3}/.test(msgU)) {
-        // Sipariş sorusu — sipariş + detaylar + dolumlar paralel çek
-        [veriSiparis, veriDolum] = await Promise.all([
-            icdasVeriCek('siparis', null, 500),   // limit yüksek tut — tüm satırlar gelsin
+        // Sipariş sorusu — sipariş + irsaliye + stok + dolum hepsini çek
+        [veriSiparis, veriIrsaliye, veriStok, veriDolum] = await Promise.all([
+            icdasVeriCek('siparis', null, 500),
+            icdasVeriCek('irsaliye', null, 500),  // Giriş/çıkış hareketleri burada
+            icdasVeriCek('stok', null, 500),       // Stok durumu burada
             icdasVeriCek('dolum', null, 500)
         ]);
     } else if (/IRSALIYE|SEVK|TESLIMAT|GELEN|GIDEN/.test(msgU)) {
@@ -218,38 +220,61 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             console.log('⚠️ Tüm veriler null — fallback: all çekiliyor');
             veriGenel = await icdasVeriCek('all');
         }
-        // Sipariş detay satırlarını EbatKodu bazında grupla
+        // ── Dolum listesinden ebat bazlı sayım ──
         const dolumTumListe = [
             ...(veriDolum?.data?.dolum?.listeler?.devamEden || []),
             ...(veriDolum?.data?.dolum?.listeler?.sonTamamlanan || [])
         ];
-        
-        // EbatKodu bazında say
-        const ebatSayim = {};
+        const dolumEbatSayim = {};
         dolumTumListe.forEach(d => {
-            const ebat = d.EbatKodu || d.EbatAdi || 'Bilinmeyen';
-            ebatSayim[ebat] = (ebatSayim[ebat] || 0) + 1;
+            const ebat = (d.EbatKodu || d.EbatAdi || 'Bilinmeyen').trim();
+            dolumEbatSayim[ebat] = (dolumEbatSayim[ebat] || 0) + 1;
         });
 
-        // Sipariş detay satırları — API'den gelen tüm alanlar
+        // ── İrsaliye hareketlerinden ebat bazlı giriş/çıkış hesabı ──
+        const irsaliyeTumListe = [
+            ...(veriIrsaliye?.data?.irsaliye?.listeler?.gelen || []),
+            ...(veriIrsaliye?.data?.irsaliye?.listeler?.giden || [])
+        ];
+        
+        // Stok listesinden ebat bazlı kalan hesabı
+        const stokListesi = veriStok?.data?.stok?.listeler?.aktif || [];
+        const stokEbatDurum = {};
+        stokListesi.forEach(s => {
+            const ad = (s.StokIsmi || s.Kod || '').trim();
+            stokEbatDurum[ad] = {
+                kod: s.Kod,
+                giris: s.Giris,
+                cikis: s.Cikis,
+                kalan: s.Kalan
+            };
+        });
+
         const siparisListesi = veriSiparis?.data?.siparis?.listeler || {};
-        const siparisDetaylar = veriSiparis?.data?.siparisDetaylari 
-                             || veriSiparis?.data?.siparis?.listeler?.detaylar 
-                             || veriSiparis?.data?.siparis?.listeler?.satirlar 
-                             || [];
 
         veriBlok = JSON.stringify({
             arama: veriArama?.arama || null,
+
+            // Sipariş özeti
             siparisOzet: veriSiparis?.data?.siparis?.ozet || null,
             siparisAcik: siparisListesi?.acik || [],
-            siparisDetaylar: siparisDetaylar,           // Satır bazlı detaylar (ebat + miktar)
             siparissOnTamamlanan: siparisListesi?.sonTamamlanan || [],
-            dolumEbatSayim: ebatSayim,                 // {"1200-20": 45, "1200-24": 73} formatı
+
+            // Stok: ebat bazlı giriş/çıkış/kalan (PDF'deki "Gelen Stok Özeti" buradan)
+            stokEbatDurum: stokEbatDurum,
+            stokTumListe: stokListesi,
+
+            // İrsaliye hareketleri (gelen/giden)
+            irsaliyeGelen: veriIrsaliye?.data?.irsaliye?.listeler?.gelen || [],
+            irsaliyeGiden: veriIrsaliye?.data?.irsaliye?.listeler?.giden || [],
+            irsaliyeOzet: veriIrsaliye?.data?.irsaliye?.ozet || null,
+
+            // Dolum: ebat bazlı sayım + detay listeler
+            dolumEbatSayim: dolumEbatSayim,
             dolumDevamEden: veriDolum?.data?.dolum?.listeler?.devamEden || [],
             dolumSonTamamlanan: veriDolum?.data?.dolum?.listeler?.sonTamamlanan || [],
             dolumOzet: veriDolum?.data?.dolum?.ozet || null,
-            irsaliye: veriIrsaliye?.data?.irsaliye || null,
-            stok: veriStok?.data?.stok || null,
+
             paketleme: veriGenel?.data?.paketleme || null,
             genelOzet: veriGenel?.genelOzet || null,
         });
@@ -267,26 +292,39 @@ SİSTEM VERİSİ:
 ${veriBlok}
 
 VERİ AÇIKLAMALARI:
-- siparisAcik[] → açık/kısmi siparişler. Her kayıt: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen, SatirSayisi
-- siparisDetaylar[] → sipariş SATIR detayları — her satırda ebat ve miktar bilgisi olabilir
-- dolumEbatSayim → {"1200-20": 45, "1200-24": 73} formatında HAZIR ebat bazlı sayım — BU ALANI KULLAN
-- dolumDevamEden[] → şu an devam eden dolumlar (EbatKodu, DolumDurumu, SiparisNo)
-- dolumSonTamamlanan[] → tamamlanan dolumlar (EbatKodu, BosAgirlik, DoluAgirlik)
-- irsaliye → gelen/giden/hurda irsaliyeler
+- siparisAcik[] → Açık siparişler. Alanlar: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen, SatirSayisi. Kalan = ToplamMiktar - TeslimAlinan
+- stokEbatDurum → Ebat bazlı stok durumu: {StokAdı: {giris, cikis, kalan}}. PDF'deki "Gelen Stok Özeti" buradan okunur
+- stokTumListe[] → Tüm stok kartları: Kod, StokIsmi, Giris, Cikis, Kalan
+- irsaliyeGiden[] → Gönderilen irsaliyeler (sevkiyatlar). Sipariş bazlı gönderilen miktarlar burada
+- irsaliyeGelen[] → Teslim alınan irsaliyeler
+- dolumEbatSayim → {"1200-20 TEKERLEK": 45, "1200-24 TEKERLEK": 73} hazır ebat sayımı
+- dolumDevamEden[] → Devam eden dolumlar (EbatKodu, DolumDurumu, SiparisNo)
+- dolumSonTamamlanan[] → Tamamlanan dolumlar (EbatKodu)
 - arama → KD-, SIP-, IRS- kod sorgusu sonucu
-- stok.listeler.aktif[] → stok kartları (Kod, StokIsmi, Kalan)
 
 MÜŞTERİNİN MESAJI: "${message}"
 
 YANIT KURALLARI:
 1. Doğal ve samimi konuş — robot gibi değil.
-2. "Kaç tane 1200-20 / 1200-24" gibi ebat sorusunda: ÖNCE dolumEbatSayim alanını kullan. Bu alan zaten hazır sayılmış ebat dağılımını verir. Örn: dolumEbatSayim = {"1200-20 TEKERLEK": 45} → "1200-20'den 45 adet dolum yapılmış."
-3. Sipariş detayı sorusunda: siparisAcik listesinden ToplamMiktar, TeslimAlinan, SevkEdilen bilgilerini ver. Kalan = ToplamMiktar - TeslimAlinan olarak hesapla.
-4. Dolum detayı sorusunda: dolumDevamEden ve dolumSonTamamlanan listelerini kullan.
-5. "Kaç tane geldi/gitti" sorusunda: irsaliye listesini kullan.
+
+2. SİPARİŞ DETAYI sorusunda (kaç sipariş, ne durumda):
+   → siparisAcik listesinden: SiparisNo, ToplamMiktar, TeslimAlinan, SevkEdilen göster
+   → Kalan = ToplamMiktar - TeslimAlinan hesapla
+
+3. EBAT BAZLI MİKTAR sorusunda (kaç tane 1200-20, kaç tane 1200-24):
+   → stokTumListe içinde "1200-20" veya "1200-24" geçen satırları bul
+   → Her ebat için: Giris (teslim alınan), Cikis (gönderilen), Kalan değerlerini ver
+   → Örn: "1200-20 TEKERLEK(YENİ): Teslim Alınan 46 adet, Gönderilen 41 adet, Kalan 5 adet"
+
+4. GELEN/GİDEN İRSALİYE sorusunda:
+   → irsaliyeGiden listesinden gönderilen miktarları, irsaliyeGelen'den alınanları göster
+
+5. DOLUM DURUMU sorusunda:
+   → dolumEbatSayim ve dolumDevamEden listelerini kullan
+
 6. Genel durum sorusunda: genelOzet'ten kısa özet ver.
-7. Kod sorgusunda: arama.sonuc içinden kaydı bul.
-8. Veri boş veya null gelirse: ilgili ebat için "Sistemde kayıt bulunamadı" de, genel hata mesajı verme.
+7. Kod sorgusunda (KD-, SIP-): arama sonucunu kullan.
+8. Veri null/boş ise: "Bu bilgiye şu an ulaşamıyorum" de.
 9. Kısa, net, profesyonel Türkçe. Gereksiz tekrar yapma.`;
 
     const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
