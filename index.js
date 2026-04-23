@@ -198,51 +198,95 @@ async function icdasVeriCek(section = 'all', q = null, limit = 500) {
 async function icdasSiparisDetayGetir(siparisNo, siparisId) {
     const sonuclar = { satirlar: [], sipDolumlar: [], irsaliye: null, stokMap: {} };
     
-    // Tüm verileri paralel çek
-    const [htmlRes, irsRes, dolumRes] = await Promise.allSettled([
-        axios.get(`http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}`, { timeout: 10000 }),
+    // Tüm verileri paralel çek — JSON endpoint kullan (html parse yerine)
+    const [jsonRes, irsRes, dolumRes] = await Promise.allSettled([
+        axios.get(`http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}&json=1`, { timeout: 10000 }),
         axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye&limit=500`, { timeout: 10000 }),
         axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=dolum&limit=500`, { timeout: 10000 })
     ]);
 
-    // HTML parse — sipariş satır detayları
-    if (htmlRes.status === 'fulfilled') {
-        const html = String(htmlRes.value.data || '');
-        const satirlar = [];
-        
-        // Tablo satırlarını bul: <tr> içindeki <td> değerleri
-        const trParts = html.split('<tr');
-        for (const trPart of trParts) {
-            const tdValues = [];
-            const tdSplit = trPart.split('<td');
-            for (let i = 1; i < tdSplit.length; i++) {
-                const closeIdx = tdSplit[i].indexOf('</td>');
-                if (closeIdx === -1) continue;
-                const raw = tdSplit[i].substring(0, closeIdx);
-                const text = raw.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
-                tdValues.push(text);
-            }
-            // Sipariş satırı: ilk TD sayı (sıra no), 7 TD var
-            if (tdValues.length >= 6 && /^\d+$/.test(tdValues[0])) {
-                const urunAdi = (tdValues[1] || '').trim();
-                const sipMiktar   = parseFloat((tdValues[2] || '0').replace(',', '.')) || 0;
-                const teslimAlinan= parseFloat((tdValues[3] || '0').replace(',', '.')) || 0;
-                const gonderilen  = parseFloat((tdValues[4] || '0').replace(',', '.')) || 0;
-                const kalanMiktar = Math.abs(parseFloat((tdValues[5] || '0').replace(',', '.')) || 0);
-                if (urunAdi && sipMiktar > 0) {
-                    satirlar.push({ urunAdi, sipMiktar, teslimAlinan, gonderilen, kalanMiktar });
+    // JSON parse — sipariş satır detayları (doğrudan yapılandırılmış veri)
+    if (jsonRes.status === 'fulfilled') {
+        const json = jsonRes.value.data;
+        console.log('JSON detay ham:', JSON.stringify(json).substring(0, 500));
+
+        // Sipariş satırlarını JSON'dan çek
+        // Olası alan adları: satirlar, siparisDetay, detaylar, rows, items, urunler
+        const satirKaynagi =
+            json?.satirlar ||
+            json?.data?.satirlar ||
+            json?.siparisDetay ||
+            json?.data?.siparisDetay ||
+            json?.detaylar ||
+            json?.data?.detaylar ||
+            json?.rows ||
+            json?.items ||
+            json?.urunler ||
+            null;
+
+        if (Array.isArray(satirKaynagi) && satirKaynagi.length > 0) {
+            const satirlar = satirKaynagi.map(s => {
+                // Olası alan adı varyantlarını destekle
+                const urunAdi     = (s.UrunAdi || s.urunAdi || s.StokAdi || s.stokAdi || s.Aciklama || s.aciklama || '').trim();
+                const sipMiktar   = parseFloat((s.SiparisMiktar || s.siparisMiktar || s.Miktar || s.miktar || s.SipMiktar || '0').toString().replace(',', '.')) || 0;
+                const teslimAlinan= parseFloat((s.TeslimAlinan  || s.teslimAlinan  || s.GelenMiktar || '0').toString().replace(',', '.')) || 0;
+                const gonderilen  = parseFloat((s.GonderilenMiktar || s.gonderilenMiktar || s.GidenMiktar || s.Gonderilen || '0').toString().replace(',', '.')) || 0;
+                const kalanRaw    = parseFloat((s.Kalan || s.kalan || s.KalanMiktar || '0').toString().replace(',', '.')) || 0;
+                const kalanMiktar = Math.abs(kalanRaw);
+                return { urunAdi, sipMiktar, teslimAlinan, gonderilen, kalanMiktar };
+            }).filter(s => s.urunAdi && s.sipMiktar > 0);
+
+            console.log('JSON satirlar:', JSON.stringify(satirlar));
+            sonuclar.satirlar = satirlar;
+        } else {
+            // JSON'da satır bulunamadı — HTML fallback ile dene
+            console.log('JSON satır bulunamadı, HTML fallback deneniyor...');
+            try {
+                const htmlRes2 = await axios.get(
+                    `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}`,
+                    { timeout: 10000 }
+                );
+                const html = String(htmlRes2.data || '');
+                const satirlar = [];
+                const trParts = html.split(/<tr[\s>]/i);
+                for (const trPart of trParts) {
+                    const tdValues = [];
+                    // <td ...> veya <td> şeklindeki hücreleri yakala, > sonrasına kadar attribute'ları atla
+                    const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+                    let m;
+                    while ((m = tdRegex.exec(trPart)) !== null) {
+                        const text = m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+                        tdValues.push(text);
+                    }
+                    // Sipariş satırı: ilk TD sıra numarası (1,2,3...), en az 6 TD olmalı
+                    if (tdValues.length >= 6 && /^\d+$/.test(tdValues[0])) {
+                        const urunAdi    = (tdValues[1] || '').trim();
+                        const sipMiktar  = parseFloat((tdValues[2] || '0').replace(',', '.')) || 0;
+                        const teslimAlinan = parseFloat((tdValues[3] || '0').replace(',', '.')) || 0;
+                        const gonderilen   = parseFloat((tdValues[4] || '0').replace(',', '.')) || 0;
+                        const kalanMiktar  = Math.abs(parseFloat((tdValues[5] || '0').replace(',', '.')) || 0);
+                        if (urunAdi && sipMiktar > 0) {
+                            satirlar.push({ urunAdi, sipMiktar, teslimAlinan, gonderilen, kalanMiktar });
+                        }
+                    }
                 }
+                console.log('HTML fallback satirlar:', JSON.stringify(satirlar));
+                sonuclar.satirlar = satirlar;
+
+                // İrsaliye no listesini HTML'den çek
+                const irsNolar = [...new Set((html.match(/(?:KLI|IC|TIS|MTU)\d+/g) || []))];
+                sonuclar.irsNolar = irsNolar;
+            } catch(e2) {
+                console.log('HTML fallback hatası:', e2.message);
             }
         }
-        console.log('HTML satirlar:', JSON.stringify(satirlar));
-        sonuclar.satirlar = satirlar;
-        
-        // İrsaliye no listesini HTML'den çek
-        const irsNolar = [...new Set((html.match(/(?:KLI|IC|TIS|MTU)\d+/g) || []))];
-        sonuclar.irsNolar = irsNolar;
-        console.log('İrsaliye nolar HTML:', irsNolar);
+
+        // İrsaliye numaralarını JSON'dan da çek (varsa)
+        const irsNoKaynagi = json?.irsNolar || json?.data?.irsNolar || json?.irsaliyeNolar || null;
+        if (Array.isArray(irsNoKaynagi)) sonuclar.irsNolar = irsNoKaynagi;
+
     } else {
-        console.log('HTML hatası:', htmlRes.reason?.message);
+        console.log('JSON API hatası:', jsonRes.reason?.message);
     }
 
     // İrsaliye listesi
