@@ -276,13 +276,24 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
     // ── İşlem yapıldı, yeni mesaj geldi — geçerli seçim mi? ──
     
-    // Sipariş numarası yazıldıysa detay göster
-    if (ses.acikSiparisler && /\d{7,}/.test(msgTemiz)) {
-        const sipNo = msgTemiz.trim();
-        const bulunan = ses.acikSiparisler.find(s => s.SiparisNo === sipNo);
+    // Açık sipariş listesindeyken numara yazılırsa detay göster
+    if (ses.acikMod && ses.acikSiparisler) {
+        // 1,2,3... gibi sıra numarası mı?
+        const siraMatch = msgTemiz.match(/^([1-9])$/);
+        // Uzun sipariş no mu?
+        const sipNoMatch = msgTemiz.match(/^\d{7,}$/);
+        
+        let bulunan = null;
+        if (siraMatch) {
+            bulunan = ses.acikSiparisler[parseInt(siraMatch[1]) - 1] || null;
+        } else if (sipNoMatch) {
+            bulunan = ses.acikSiparisler.find(s => s.SiparisNo === msgTemiz) || null;
+        }
+
         if (bulunan) {
             const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
-            const detayMesaj = `📋 *Sipariş Detayı*\n\n` +
+            const detayMesaj = 
+                `📋 *Sipariş Detayı*\n\n` +
                 `*Sipariş No:* ${bulunan.SiparisNo}\n` +
                 `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n` +
                 `*Toplam:* ${bulunan.ToplamMiktar} adet\n` +
@@ -290,7 +301,9 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 `*Sevk Edilen:* ${bulunan.SevkEdilen} adet\n` +
                 `*Kalan:* ${kalan} adet\n` +
                 `*Durum:* ${bulunan.DurumEtiket}\n` +
-                `─────────────────\n0️⃣ Ana Menüye Dön`;
+                `─────────────────\n` +
+                `0️⃣ Ana Menüye Dön`;
+            icdasSession.set(sender, { ...ses, acikMod: false, timestamp: Date.now() });
             await whatsappGonder(sender, detayMesaj);
             return;
         }
@@ -333,16 +346,20 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                 if (!acik.length) {
                     mesaj = '✅ Şu an açık bekleyen siparişiniz bulunmuyor.';
                 } else {
+                    // Numaralı emoji listesi
+                    const emojiler = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣'];
                     mesaj = '📦 *Açık Siparişler*\n\n';
                     acik.forEach((s, i) => {
-                        mesaj += `${i+1}) *${s.SiparisNo}*  |  ${(s.SiparisTarihi||'').substring(0,10)}\n`;
+                        const em = emojiler[i] || `${i+1})`;
+                        mesaj += `${em} ${s.SiparisNo}  |  ${(s.SiparisTarihi||'').substring(0,10)}\n`;
                     });
                     mesaj += '─────────────────\n';
-                    mesaj += 'Detay için sipariş numarasını yazınız.';
-                    // Seçilen sipariş bilgisini session'a kaydet
+                    mesaj += '0️⃣ Ana Menüye Dön';
+                    // Listeyi session'a kaydet — numara yazınca detay açılsın
                     icdasSession.set(sender, { 
                         state: 'menu', 
                         acikSiparisler: acik,
+                        acikMod: true,
                         timestamp: Date.now() 
                     });
                 }
