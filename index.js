@@ -134,6 +134,100 @@ function splitRow(line, sep = ',') {
     return result;
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// İÇDAŞ ENTEGRASYONu — Kaupan API
+// ═══════════════════════════════════════════════════════════════
+const ICDAS_API = 'http://84.44.77.42:3939/kaulas/api_kaupan_info.php';
+const ICDAS_ANAHTAR_KELIMELER = ['İÇDAŞ', 'ICDAS', 'İCDAŞ', 'IÇDAŞ'];
+
+function normalize(str) {
+    return (str || '').toUpperCase()
+        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+}
+
+function icdasMi(cariAdi) {
+    const cu = normalize(cariAdi);
+    // Hem kısa hem uzun haliyle kontrol et
+    const kontroller = ['ICDAS','ICTAS','ICTAŞ','ICDAS CELIK','ICDAS CELIK ENERJI'];
+    const eslesti = kontroller.some(k => cu.includes(normalize(k)));
+    console.log(`[İçdaş kontrol] "${cariAdi}" → normalize: "${cu}" → eşleşti: ${eslesti}`);
+    return eslesti;
+}
+
+async function icdasVeriCek(section = 'all', q = null) {
+    try {
+        const url = new URL(ICDAS_API);
+        url.searchParams.set('section', section);
+        url.searchParams.set('limit', '50');
+        if (q) url.searchParams.set('q', q);
+        const res = await axios.get(url.toString(), { timeout: 8000 });
+        return res.data;
+    } catch(e) {
+        console.error('İçdaş API hatası:', e.message);
+        return null;
+    }
+}
+
+async function icdasCevapla(sender, message, yetkiliAdi) {
+    console.log('🏭 İçdaş modu aktif');
+
+    // Mesaja göre hangi section çekileceğini belirle
+    const msgU = message.toUpperCase()
+        .replace(/İ/g,'I').replace(/Ş/g,'S').replace(/Ğ/g,'G')
+        .replace(/Ü/g,'U').replace(/Ö/g,'O').replace(/Ç/g,'C');
+
+    let section = 'all';
+    let q = null;
+
+    if (/DOLUM|JEL|KAUCUK|LASTIK/.test(msgU)) section = 'dolum';
+    else if (/PAKET|AMBALAJ/.test(msgU)) section = 'paketleme';
+    else if (/SIPARIS|SİPARİŞ|SIPARI/.test(msgU)) section = 'siparis';
+    else if (/IRSALIYE|İRSALİYE|SEVK|TESLIMAT/.test(msgU)) section = 'irsaliye';
+    else if (/STOK|KALAN|ENVANTER/.test(msgU)) section = 'stok';
+
+    // KD-, SIP-, IRS- gibi kod varsa arama yap
+    const kodMatch = message.match(/\b(KD-\d+|SIP-\d+|IRS-\d+|PKT-\d+|[A-Z]{2,5}\d{6,})\b/i);
+    if (kodMatch) { q = kodMatch[0]; section = 'all'; }
+
+    const veri = await icdasVeriCek(section, q);
+
+    const selamAdi = yetkiliAdi ? ` ${yetkiliAdi.split(' ')[0]}` : '';
+    
+    // İlk mesaj mı?
+    const ilkMesaj = ilkMesajMi(sender);
+
+    const prompt = `Sen Erdemli Kauçuk firmasının WhatsApp asistanısın - adın RobERD.
+Şu an İÇDAŞ ÇELİK ENERJİ TERSANE VE ULAŞIM SANAYİ firmasından${selamAdi ? selamAdi + " adlı yetkili ile" : ""} konuşuyorsun.
+
+${ilkMesaj ? `Bu konuşmanın İLK mesajıdır. "Merhaba${selamAdi}! Size nasıl yardımcı olabilirim?" diyerek sıcak bir karşılama yap.` : `Bu devam eden bir konuşmadır. Tekrar tanıtım YAPMA, doğrudan soruyu yanıtla.`}
+
+KAUPAN SİSTEM VERİSİ (İçdaş'a ait güncel veriler):
+${JSON.stringify(veri, null, 0)}
+
+MÜŞTERİNİN MESAJI: "${message}"
+
+YANIT KURALLARI:
+1. Doğal ve samimi bir dil kullan, robot gibi değil.
+2. Sorduğu konuya göre ilgili veriyi özetle — hepsini listeleme, sadece önemli olanı söyle.
+3. Dolum sorusunda: devam eden dolumlar, tamamlananlar, durum etiketlerini belirt.
+4. Sipariş sorusunda: açık siparişler, kısmi/yeni ayrımı, toplam/teslim/kalan miktarları belirt.
+5. Stok sorusunda: aktif kart sayısı, toplam kalan, sıfır stoklu ürün sayısını belirt.
+6. İrsaliye sorusunda: gelen/giden/hurda ayrımı ve bu ayki rakamları belirt.
+7. Genel durum sorusunda: genelOzet'i kullanarak kısa bir özet ver.
+8. Kod numarası sorulduysa (KD-, SIP-, IRS-) arama sonucunu kullan.
+9. Bilgi yoksa veya API boş döndüyse: "Şu an sisteme ulaşamıyorum, lütfen tekrar deneyin."
+10. Kısa, net, profesyonel Türkçe kullan.`;
+
+    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    const result = await model.generateContent(prompt);
+    const cevap = result.response.text();
+
+    await whatsappGonder(sender, cevap);
+    console.log(`✅ İçdaş cevap gönderildi -> ${sender}`);
+}
+
 async function fetchAllData() {
     const results = await Promise.allSettled(
         Object.entries(URLS).map(([key, url]) =>
@@ -537,6 +631,16 @@ app.post('/webhook', async (req, res) => {
             yetkiliErken = telIdx >= 0 && yetkiliAdlari[telIdx]
                 ? yetkiliAdlari[telIdx]
                 : (yetkiliAdlari[0] || '');
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // İÇDAŞ KONTROLÜ — Eğer İçdaş firmasıysa özel akışa yönlendir
+        // ═══════════════════════════════════════════════════════════════
+        console.log(`[Cari Tespit] sender: ${sender} | cariAdi: "${cariAdiErken}" | kayitli: ${kayitliMusteriErken}`);
+        if (icdasMi(cariAdiErken)) {
+            console.log('🏭 İÇDAŞ modu aktif!');
+            await icdasCevapla(sender, message, yetkiliErken);
+            return;
         }
 
         const session = siparisSession.get(sender);
