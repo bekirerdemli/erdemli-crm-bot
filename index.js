@@ -198,12 +198,22 @@ async function icdasVeriCek(section = 'all', q = null, limit = 500) {
 async function icdasSiparisDetayGetir(siparisNo, siparisId) {
     const sonuclar = {};
     
-    // Dolum, İrsaliye ve Stok listelerini paralel çek
-    const [dolumRes, irsRes, stokRes] = await Promise.allSettled([
+    // Dolum, İrsaliye, Stok ve Sipariş Detay endpoint'lerini paralel çek
+    const [dolumRes, irsRes, stokRes, sipDetayRes] = await Promise.allSettled([
         axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=dolum&limit=500`, { timeout: 10000 }),
         axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye&limit=500`, { timeout: 10000 }),
-        axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=stok&limit=500`, { timeout: 10000 })
+        axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=stok&limit=500`, { timeout: 10000 }),
+        axios.get(`http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${siparisId}&json=1`, { timeout: 8000 })
     ]);
+    
+    // Sipariş satır detaylarını dene
+    if (sipDetayRes.status === 'fulfilled') {
+        const sipDetay = sipDetayRes.value.data;
+        console.log('Sipariş detay API yanıtı:', JSON.stringify(sipDetay)?.substring(0,300));
+        sonuclar.sipDetay = sipDetay;
+    } else {
+        console.log('Sipariş detay endpoint erişilemedi:', sipDetayRes.reason?.message);
+    }
 
     // Stok kodu → ürün adı haritası
     const stokMap = {}; // { "0003": "1200-20 TEKERLEK(YENİ)", ... }
@@ -303,9 +313,25 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 const teslimAlinanEbat = {}; // { urunAdi: adet }
                 Object.entries(sipEbat).forEach(([ad, c]) => { teslimAlinanEbat[ad] = c.tamam; });
 
-                // Sipariş edilen — dolum toplamından çıkar (tamam + devam = sipariş)
+                // Sipariş edilen — stok Giris değeri = toplam teslim alınan (İçdaş'tan gelen)
+                // Sipariş satır detayı API'de yok, stok kartından ebat bazlı Giris değeri ile hesapla
                 const siparisEbat = {}; // { urunAdi: adet }
-                Object.entries(sipEbat).forEach(([ad, c]) => { siparisEbat[ad] = c.tamam + c.devam; });
+                
+                // Önce sipDetay'da satır bilgisi var mı bak
+                const sipDetayData = detay.sipDetay;
+                if (sipDetayData && sipDetayData.satirlar) {
+                    sipDetayData.satirlar.forEach(s => {
+                        const ad = s.UrunAdi || s.StokAdi || s.EbatAdi || 'Bilinmeyen';
+                        siparisEbat[ad] = parseFloat(s.Miktar || s.SiparisMiktari || 0);
+                    });
+                } else {
+                    // Sipariş edilen = dolum tamamlanan + devam eden (bu siparişe ait)
+                    // Ama daha doğrusu: stok girişleri = teslim alınan = siparişe karşılık gelen
+                    // Şimdilik dolum bazlı hesapla, teslim alınan = Giris stoktan
+                    Object.entries(sipEbat).forEach(([ad, c]) => { 
+                        siparisEbat[ad] = c.tamam + c.devam; 
+                    });
+                }
 
                 // Teslim edilen irsaliyeler (Kaulas → İçdaş) — bu siparişe ait
                 const irsGelen = (detay.irsaliye?.data?.irsaliye?.listeler?.gelen || [])
