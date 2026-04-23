@@ -152,6 +152,8 @@ Aşağıdaki konularda size yardımcı olabilirim:
 
 Lütfen ilgili numarayı yazınız.`;
 
+const ICDAS_ALT_MENU = '\n─────────────────\n0️⃣ Ana Menüye Dön';
+
 const ICDAS_GECERSIZ = `Bu konuda yardımcı olma yetkim bulunmuyor. 
 Lütfen yukarıdaki menüden bir seçenek yazınız (1-5).`;
 
@@ -219,7 +221,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
     // Mesaj normalizasyonu
     const msgTemiz = message.trim();
-    const msgSayi = msgTemiz.match(/^[1-5]$/)?.[0];
+    const msgSayi = msgTemiz.match(/^[0-5]$/)?.[0];
 
     // ── SONLANDIRILMIŞ görüşme — yeni mesajda menüye dön ──
     if (ses.state === 'bitti') {
@@ -255,6 +257,11 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             return;
         }
         // Geçerli seçim
+        if (msgSayi === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
         icdasSession.set(sender, { state: 'islem_' + msgSayi, timestamp: Date.now() });
         await icdasIslemYap(sender, msgSayi, selamAdi);
         return;
@@ -269,6 +276,11 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
     // ── İşlem yapıldı, yeni mesaj geldi — geçerli seçim mi? ──
     if (msgSayi) {
+        if (msgSayi === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
         icdasSession.set(sender, { state: 'islem_' + msgSayi, timestamp: Date.now() });
         await icdasIslemYap(sender, msgSayi, selamAdi);
     } else {
@@ -294,19 +306,14 @@ async function icdasIslemYap(sender, secim, selamAdi) {
     try {
         switch(secim) {
             case '1': { // Açık Siparişler
-                const [vS, vSt] = await Promise.all([
-                    icdasVeriCek('siparis', null, 500),
-                    icdasVeriCek('stok', null, 500)
-                ]);
+                const vS = await icdasVeriCek('siparis', null, 500);
                 const acik = vS?.data?.siparis?.listeler?.acik || [];
-                const stokListe = vSt?.data?.stok?.listeler?.aktif || [];
-                const tekerler = stokListe.filter(s => (s.StokIsmi||'').toUpperCase().includes('TEKERLEK'));
                 
                 if (!acik.length) {
                     mesaj = '✅ Şu an açık bekleyen siparişiniz bulunmuyor.';
                 } else {
                     mesaj = '📦 *Açık Siparişler*\n\n';
-                    acik.forEach(s => {
+                    acik.forEach((s, i) => {
                         const kalan = (parseFloat(s.ToplamMiktar)||0) - (parseFloat(s.TeslimAlinan)||0);
                         mesaj += `*Sipariş No:* ${s.SiparisNo}\n`;
                         mesaj += `*Tarih:* ${(s.SiparisTarihi||'').substring(0,10)}\n`;
@@ -315,13 +322,8 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                         mesaj += `*Sevk Edilen:* ${s.SevkEdilen} adet\n`;
                         mesaj += `*Kalan:* ${kalan} adet\n`;
                         mesaj += `*Durum:* ${s.DurumEtiket}\n`;
+                        if (i < acik.length - 1) mesaj += '─────────────────\n';
                     });
-                    if (tekerler.length) {
-                        mesaj += '\n*📊 Ürün Bazlı Durum:*\n';
-                        tekerler.forEach(t => {
-                            mesaj += `• ${t.StokIsmi}: Gelen ${t.Giris||0} | Giden ${t.Cikis||0} | Kalan ${t.Kalan||0}\n`;
-                        });
-                    }
                 }
                 break;
             }
@@ -417,7 +419,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
         mesaj = 'Sisteme şu an ulaşamıyorum, lütfen tekrar deneyin.';
     }
 
-    mesaj += '\n\n─────────────────\nBaşka bir işlem için numara yazınız:\n1️⃣ Açık Sipariş  2️⃣ Kapalı Sipariş\n3️⃣ Stok  4️⃣ İrsaliye  5️⃣ Dolum';
+    mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
     await whatsappGonder(sender, mesaj);
     icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
     console.log(`✅ İçdaş seçim ${secim} işlendi -> ${sender}`);
