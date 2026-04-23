@@ -242,46 +242,73 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             icdasSession.set(sender, { ...ses, acikMod: false, timestamp: Date.now() });
             await whatsappGonder(sender, '⏳ Sipariş detayı yükleniyor...');
             try {
-                const [irsaliyeRes, stokRes] = await Promise.all([
-                    icdasVeriCek('irsaliye', null, 500),
-                    icdasVeriCek('stok', null, 500)
+                const sipNo = bulunan.SiparisNo;
+
+                // Bu siparişe ait dolumları q= ile ara, irsaliyeleri de çek
+                const [aramaSon, irsaliyeRes] = await Promise.all([
+                    icdasVeriCek('all', sipNo, 500),   // q=4500159008 → o siparişe ait tüm kayıtlar
+                    icdasVeriCek('irsaliye', null, 500)
                 ]);
-                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
-                const stokListe = stokRes?.data?.stok?.listeler?.aktif || [];
-                const tekerler = stokListe.filter(s => (s.StokIsmi||'').toUpperCase().includes('TEKERLEK'));
+
+                // Arama sonucundan bu siparişe ait dolumları al
+                const aramaKayitlari = aramaSon?.arama?.sonuc || [];
+                const dolumlar = aramaKayitlari.filter(k => k.tip === 'dolum');
+
+                // Dolumları ebat bazında say
+                const ebatSayim = {};
+                dolumlar.forEach(d => {
+                    const ebat = (d.EbatKodu || d.EbatAdi || 'Bilinmeyen').trim();
+                    if (!ebatSayim[ebat]) ebatSayim[ebat] = { tamam: 0, devam: 0 };
+                    if (d.DolumDurumu === 5) ebatSayim[ebat].tamam++;
+                    else ebatSayim[ebat].devam++;
+                });
+
+                // İrsaliyelerden bu siparişe ait olanları bul
                 const tumIrs = [
                     ...(irsaliyeRes?.data?.irsaliye?.listeler?.gelen || []),
                     ...(irsaliyeRes?.data?.irsaliye?.listeler?.giden || [])
                 ];
-                const sipNo = bulunan.SiparisNo;
-                const irsGelen = tumIrs.filter(i => i.TurEtiket === 'Gelen' && (i.Aciklama||'').includes(sipNo));
-                const irsGiden = tumIrs.filter(i => i.TurEtiket === 'Giden' && (i.Aciklama||'').includes(sipNo));
+                const irsGelen = tumIrs.filter(i => (i.Aciklama||'').includes(sipNo) && i.TurEtiket === 'Gelen');
+                const irsGiden = tumIrs.filter(i => (i.Aciklama||'').includes(sipNo) && i.TurEtiket === 'Giden');
+
+                // İrsaliyelerden ebat bazlı teslim gelen/giden hesabı
+                // (İrsaliye satırları varsa onları kullan, yoksa sipariş başlık verisini kullan)
+                const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
 
                 let dm = `📋 *Sipariş Detayı*\n\n`;
                 dm += `*Sipariş No:* ${sipNo}\n`;
                 dm += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
                 dm += `*Durum:* ${bulunan.DurumEtiket}\n`;
+                dm += `*Toplam:* ${bulunan.ToplamMiktar} adet | *Teslim Alınan:* ${bulunan.TeslimAlinan} | *Kalan:* ${kalan}\n`;
 
-                dm += `\n📦 *Ürün Kırılımı:*\n`;
-                if (tekerler.length) {
-                    tekerler.forEach(t => {
-                        dm += `• ${t.StokIsmi}\n`;
-                        dm += `  Sipariş: ${t.Giris||0} | Teslim Alınan: ${t.Giris||0} | Teslim Edilen: ${t.Cikis||0} | Kalan: ${t.Kalan||0}\n`;
+                // Ebat bazlı dolum kırılımı (bu siparişe ait)
+                if (Object.keys(ebatSayim).length) {
+                    dm += `\n📦 *Ürün Kırılımı (Dolum):*\n`;
+                    Object.entries(ebatSayim).forEach(([ebat, c]) => {
+                        const toplam = c.tamam + c.devam;
+                        dm += `• ${ebat}: ${toplam} adet`;
+                        if (c.devam > 0) dm += ` (${c.devam} devam ediyor)`;
+                        dm += `\n`;
                     });
                 } else {
-                    dm += `• Toplam: ${bulunan.ToplamMiktar} | Teslim Alınan: ${bulunan.TeslimAlinan} | Teslim Edilen: ${bulunan.SevkEdilen} | Kalan: ${kalan}\n`;
+                    dm += `\n📦 *Ürün Kırılımı:* Detay bulunamadı\n`;
                 }
 
+                // Teslim Alınan İrsaliyeler
                 if (irsGelen.length) {
                     dm += `\n📥 *Teslim Alınan İrsaliyeler:*\n`;
                     irsGelen.forEach(i => { dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`; });
                 }
+
+                // Teslim Edilen İrsaliyeler
                 if (irsGiden.length) {
                     dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
                     irsGiden.forEach(i => { dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)} | ${i.ToplamMiktar} adet\n`; });
                 }
+
                 dm += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
                 await whatsappGonder(sender, dm);
+
             } catch(e) {
                 console.error('Detay hatası:', e.message);
                 const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
