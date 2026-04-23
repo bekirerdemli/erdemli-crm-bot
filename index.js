@@ -236,7 +236,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         veriBlok = JSON.stringify({ hata: 'Veri işlenemedi' });
     }
 
-    const prompt = `Sen Erdemli Kauçuk firmasının WhatsApp asistanısın - adın RobERD.
+    const prompt = `Sen Kaulas Lastik firmasının WhatsApp asistanısın - adın RobERD.
 Şu an İÇDAŞ ÇELİK ENERJİ TERSANE VE ULAŞIM SANAYİ firmasından${selamAdi ? selamAdi + " adlı yetkili ile" : ""} konuşuyorsun.
 
 ${ilkMesaj ? `Bu konuşmanın İLK mesajıdır. "Merhaba${selamAdi}! Size nasıl yardımcı olabilirim?" diyerek kısa ve sıcak karşıla.` : `Devam eden konuşma — tekrar tanıtım YAPMA, doğrudan soruyu yanıtla.`}
