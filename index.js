@@ -445,12 +445,91 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                     dm += `• Yok\n`;
                 }
 
+                // ── İrsaliye ürün kırılımı helper ──
+                // Dolum verilerinden irsaliye bazlı ürün sayısını hesapla
+                // Her dolum kaydında IrsaliyeNo varsa kullan, yoksa HTML'deki irsNolar listesiyle eşleştir
+                const irsaliyeUrunMap = {}; // { IrsaliyeNo: { urunAdi: adet } }
+                // Önce tüm dolumları (bu sipariş + diğerleri) irsaliye bazlı grupla
+                const tumDolumlar = [
+                    ...(detay.irsaliye?.data?.dolum?.listeler?.devamEden || []),
+                    ...(detay.irsaliye?.data?.dolum?.listeler?.sonTamamlanan || [])
+                ];
+                // Dolum verisi irsaliyeye bağlıysa kullan
+                sipDolumlar.forEach(d => {
+                    const irsNo = (d.IrsaliyeNo || d.irsaliyeNo || '').trim();
+                    const ad = urunAdi(d);
+                    if (irsNo && ad && tekerlerMi(ad)) {
+                        if (!irsaliyeUrunMap[irsNo]) irsaliyeUrunMap[irsNo] = {};
+                        irsaliyeUrunMap[irsNo][ad] = (irsaliyeUrunMap[irsNo][ad] || 0) + 1;
+                    }
+                });
+
+                // İrsaliye detay satırlarını API'den çek (her irsaliye için)
+                // api_kaupan_info.php?section=irsaliye_satirlar&id=... veya &irsaliye_no=...
+                const irsDetayMap = {}; // { IrsaliyeNo: [ {urunAdi, miktar} ] }
+                const hedefIrsNolar = [...new Set([
+                    ...irsGelen.map(i => i.IrsaliyeNo),
+                    ...irsGiden.map(i => i.IrsaliyeNo),
+                    ...irsNolarListesi
+                ])].filter(Boolean);
+
+                if (hedefIrsNolar.length > 0) {
+                    const irsDetayPromises = hedefIrsNolar.map(no =>
+                        Promise.allSettled([
+                            axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye_satirlar&id=${no}`, { timeout: 8000 }),
+                            axios.get(`http://84.44.77.42:3939/kaulas/api_kaupan_info.php?section=irsaliye&irsaliye_no=${no}`, { timeout: 8000 }),
+                            axios.get(`http://84.44.77.42:3939/kaulas/irsaliye_detay_pdf.php?Id=${no}&json=1`, { timeout: 8000 }),
+                        ])
+                    );
+                    const irsDetayResults = await Promise.all(irsDetayPromises);
+                    hedefIrsNolar.forEach((no, idx) => {
+                        const results = irsDetayResults[idx];
+                        for (const res of results) {
+                            if (res.status !== 'fulfilled') continue;
+                            const d = res.value.data;
+                            // Farklı yapıları dene
+                            const satirlar = d?.satirlar || d?.data?.satirlar || d?.items ||
+                                d?.data?.items || d?.urunler || d?.data?.urunler || null;
+                            if (Array.isArray(satirlar) && satirlar.length > 0) {
+                                const tekerSatirlar = satirlar
+                                    .map(s => ({
+                                        urunAdi: (s.UrunAdi || s.urunAdi || s.StokAdi || s.stokAdi || s.Aciklama || '').trim(),
+                                        miktar: parseFloat((s.Miktar || s.miktar || s.Adet || s.adet || '0').toString().replace(',', '.')) || 0
+                                    }))
+                                    .filter(s => s.urunAdi && s.miktar > 0 && tekerlerMi(s.urunAdi));
+                                if (tekerSatirlar.length > 0) {
+                                    irsDetayMap[no] = tekerSatirlar;
+                                    break;
+                                }
+                            }
+                        }
+                        // API'den gelmezse dolum verisinden türet
+                        if (!irsDetayMap[no] && irsaliyeUrunMap[no]) {
+                            irsDetayMap[no] = Object.entries(irsaliyeUrunMap[no])
+                                .map(([urunAdi, miktar]) => ({ urunAdi, miktar }));
+                        }
+                        console.log(`İrsaliye detay ${no}:`, JSON.stringify(irsDetayMap[no] || null));
+                    });
+                }
+
+                // İrsaliye satırlarını formatlayan helper
+                function irsaliyeSatirYaz(irsNo) {
+                    const satirlar = irsDetayMap[irsNo];
+                    if (!satirlar || satirlar.length === 0) return '';
+                    return satirlar.map(s => `    · ${s.urunAdi}: ${s.miktar} adet`).join('\n') + '\n';
+                }
+
                 // 5) Teslim Alınan İrsaliyeler (İçdaş → Kaulas)
                 if (irsGelen.length) {
                     dm += `\n📥 *Teslim Alınan İrsaliyeler:*\n`;
                     irsGelen.forEach(i => {
                         dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)}\n`;
-                        dm += `  ${i.ToplamMiktar} adet\n`;
+                        const kirKilim = irsaliyeSatirYaz(i.IrsaliyeNo);
+                        if (kirKilim) {
+                            dm += kirKilim;
+                        } else {
+                            dm += `  Toplam: ${i.ToplamMiktar} adet\n`;
+                        }
                     });
                 }
 
@@ -459,15 +538,22 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                     dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
                     irsGiden.forEach(i => {
                         dm += `• ${i.IrsaliyeNo} | ${(i.IrsaliyeTarihi||'').substring(0,10)}\n`;
-                        dm += `  ${i.ToplamMiktar} adet\n`;
+                        const kirKilim = irsaliyeSatirYaz(i.IrsaliyeNo);
+                        if (kirKilim) {
+                            dm += kirKilim;
+                        } else {
+                            dm += `  Toplam: ${i.ToplamMiktar} adet\n`;
+                        }
                     });
                 }
 
-                // 7) İrsaliye hiç bulunamadıysa ama irsNolar listesi varsa — direkt göster
+                // 7) İrsaliye listeden eşleşmeyenler — irsNolar listesini kullan
                 if (!irsGelen.length && !irsGiden.length && irsNolarListesi.length) {
                     dm += `\n📤 *Teslim Edilen İrsaliyeler:*\n`;
                     irsNolarListesi.forEach(no => {
                         dm += `• ${no}\n`;
+                        const kirKilim = irsaliyeSatirYaz(no);
+                        if (kirKilim) dm += kirKilim;
                     });
                 }
 
