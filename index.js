@@ -354,6 +354,8 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                         mesaj += `${em} ${s.SiparisNo}  |  ${(s.SiparisTarihi||'').substring(0,10)}\n`;
                     });
                     mesaj += '─────────────────\n';
+                    mesaj += 'Detay için açık siparişin sıra numarasını yazınız.\n';
+                    mesaj += '─────────────────\n';
                     mesaj += '0️⃣ Ana Menüye Dön';
                     // Listeyi session'a kaydet — numara yazınca detay açılsın
                     icdasSession.set(sender, { 
@@ -457,7 +459,10 @@ async function icdasIslemYap(sender, secim, selamAdi) {
         mesaj = 'Sisteme şu an ulaşamıyorum, lütfen tekrar deneyin.';
     }
 
-    mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
+    // case 1 kendi menüsünü zaten ekliyor, diğerleri için ekle
+    if (!mesaj.includes('0️⃣ Ana Menüye Dön')) {
+        mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
+    }
     await whatsappGonder(sender, mesaj);
     icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
     console.log(`✅ İçdaş seçim ${secim} işlendi -> ${sender}`);
