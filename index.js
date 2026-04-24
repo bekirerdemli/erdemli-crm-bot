@@ -67,27 +67,7 @@ app.use((req, res, next) => {
 
 app.get('/webhook', (req, res) => res.status(200).send("Webhook aktif ve calisiyor"));
 
-// PDF dosyalarını servis et — Fonnte bu URL'den PDF'i indirir
-const PDF_DIR = '/tmp/kaulas_pdfs';
-const fsExtra = require('fs');
-if (!fsExtra.existsSync(PDF_DIR)) fsExtra.mkdirSync(PDF_DIR, { recursive: true });
-app.use('/pdf', require('express').static(PDF_DIR));
 
-// Sunucunun dışarıdan erişilebilir URL'ini döndür
-function getSunucuUrl() {
-    if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
-    const os = require('os');
-    const ifaces = os.networkInterfaces();
-    // eth0, ens3, enp... gibi dış arayüzü bul (lo hariç)
-    let ip = null;
-    for (const name of Object.keys(ifaces)) {
-        if (name === 'lo') continue;
-        const iface = ifaces[name]?.find(i => i.family === 'IPv4' && !i.internal);
-        if (iface) { ip = iface.address; break; }
-    }
-    const port = process.env.PORT || 3000;
-    return `http://${ip || 'localhost'}:${port}`;
-}
 
 app.get('/modeller', async (req, res) => {
     try {
@@ -335,39 +315,17 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             icdasSession.set(sender, { ...ses, pdfMod: false, timestamp: Date.now() });
             await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
             try {
-                // PDF'i indir, lokale kaydet, kendi sunucumuzdan servis et
-                const pdfSrcUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
-                const pdfFileName = `siparis_${ses.pdfSipNo}_${Date.now()}.pdf`;
-                const pdfLocalPath = path.join(PDF_DIR, pdfFileName);
+                // Auth kaldırıldı — direkt URL Fonnte'ye ver
+                const pdfUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
+                console.log(`📤 PDF gönderiliyor: ${pdfUrl}`);
 
-                // İndir
-                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
-                const pdfBuffer = Buffer.from(pdfRes.data);
-                console.log(`Content-Type: ${pdfRes.headers['content-type']} | Boyut: ${pdfBuffer.length}`);
-
-                // Header kontrolü — PDF değilse hata fırlat
-                const magic = pdfBuffer.slice(0, 5).toString('ascii');
-                if (!magic.startsWith('%PDF')) throw new Error(`PDF değil, gelen: ${magic}`);
-
-                // Lokale kaydet
-                fs.writeFileSync(pdfLocalPath, pdfBuffer);
-
-                // Kendi sunucumuzun public URL'i — Fonnte buradan indirecek
-                const publicUrl = `http://84.44.77.42:3939/pdf/${pdfFileName}`;
-                console.log(`📤 Fonnte'ye gönderiliyor: ${publicUrl}`);
-
-                const pdfSendResp = await whatsappPdfGonder(sender, publicUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
+                const pdfSendResp = await whatsappPdfGonder(sender, pdfUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
                 const respData = pdfSendResp?.data;
                 console.log(`Fonnte PDF response:`, JSON.stringify(respData));
 
                 if (!respData?.status) {
                     await whatsappGonder(sender, `⚠️ Fonnte yanıtı: ${JSON.stringify(respData)}`);
                 }
-
-                await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
-
-                // 10 dk sonra sil
-                setTimeout(() => { try { fs.unlinkSync(pdfLocalPath); } catch(e) {} }, 600000);
                 await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
             } catch(e) {
                 console.error('PDF gönderim hatası:', e.message);
@@ -460,9 +418,12 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                     ...ses,
                     acikMod: false,
                     pdfMod: true,
-                    pdfSipId: sipId,
-                    pdfSipNo: sipNo,
-                    timestamp: Date.now()
+                    pdfSipId:    sipId,
+                    pdfSipNo:    sipNo,
+                    pdfSipTarih: bulunan.SiparisTarihi || '',
+                    pdfMusteri:  bulunan.MusteriAdi || bulunan.Musteri || '',
+                    pdfDurum:    bulunan.DurumEtiket || '',
+                    timestamp:   Date.now()
                 });
 
                 await whatsappGonder(sender, dm);
