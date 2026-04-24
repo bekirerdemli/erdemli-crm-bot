@@ -73,6 +73,22 @@ const fsExtra = require('fs');
 if (!fsExtra.existsSync(PDF_DIR)) fsExtra.mkdirSync(PDF_DIR, { recursive: true });
 app.use('/pdf', require('express').static(PDF_DIR));
 
+// Sunucunun dışarıdan erişilebilir URL'ini döndür
+function getSunucuUrl() {
+    if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
+    const os = require('os');
+    const ifaces = os.networkInterfaces();
+    // eth0, ens3, enp... gibi dış arayüzü bul (lo hariç)
+    let ip = null;
+    for (const name of Object.keys(ifaces)) {
+        if (name === 'lo') continue;
+        const iface = ifaces[name]?.find(i => i.family === 'IPv4' && !i.internal);
+        if (iface) { ip = iface.address; break; }
+    }
+    const port = process.env.PORT || 3000;
+    return `http://${ip || 'localhost'}:${port}`;
+}
+
 app.get('/modeller', async (req, res) => {
     try {
         const r = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
@@ -319,36 +335,15 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             icdasSession.set(sender, { ...ses, pdfMod: false, timestamp: Date.now() });
             await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
             try {
-                const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
-                if (!BASE_URL) throw new Error('BASE_URL env tanımlı değil');
-
-                const pdfSrcUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
-                const pdfFileName = `siparis_${ses.pdfSipNo}_${Date.now()}.pdf`;
-                const pdfLocalPath = path.join(PDF_DIR, pdfFileName);
-                const pdfPublicUrl = `${BASE_URL}/pdf/${pdfFileName}`;
-
-                console.log(`📥 PDF indiriliyor: ${pdfSrcUrl}`);
-                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
-                const pdfBuffer = Buffer.from(pdfRes.data);
-
-                const pdfHeader = pdfBuffer.slice(0, 5).toString('ascii');
-                if (!pdfHeader.startsWith('%PDF')) {
-                    throw new Error(`Sunucu PDF döndürmedi (${pdfHeader.substring(0,10)})`);
-                }
-
-                fs.writeFileSync(pdfLocalPath, pdfBuffer);
-                console.log(`📄 PDF kaydedildi: ${pdfLocalPath} (${pdfBuffer.length} byte)`);
+                // PDF URL'ini doğrudan Fonnte'ye ver — indirip sunmaya gerek yok
+                const pdfPublicUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
+                console.log(`📤 PDF Fonnte'ye gönderiliyor: ${pdfPublicUrl}`);
 
                 await whatsappPdfGonder(sender, pdfPublicUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
                 console.log(`✅ PDF gönderildi -> ${sender}`);
 
                 // Menü seçeneği gönder
                 await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
-
-                // 10 dk sonra dosyayı sil
-                setTimeout(() => {
-                    try { fs.unlinkSync(pdfLocalPath); } catch(e) {}
-                }, 600000);
             } catch(e) {
                 console.error('PDF gönderim hatası:', e.message);
                 await whatsappGonder(sender,
