@@ -308,6 +308,60 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         return;
     }
 
+    // ── PDF BEKLEME MODU — kullanıcı 1 (PDF) veya 0 (menü) yazacak ──
+    if (ses.pdfMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        if (msgTemiz === '1') {
+            icdasSession.set(sender, { ...ses, pdfMod: false, timestamp: Date.now() });
+            await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
+            try {
+                const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
+                if (!BASE_URL) throw new Error('BASE_URL env tanımlı değil');
+
+                const pdfSrcUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
+                const pdfFileName = `siparis_${ses.pdfSipNo}_${Date.now()}.pdf`;
+                const pdfLocalPath = path.join(PDF_DIR, pdfFileName);
+                const pdfPublicUrl = `${BASE_URL}/pdf/${pdfFileName}`;
+
+                console.log(`📥 PDF indiriliyor: ${pdfSrcUrl}`);
+                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
+                const pdfBuffer = Buffer.from(pdfRes.data);
+
+                const pdfHeader = pdfBuffer.slice(0, 5).toString('ascii');
+                if (!pdfHeader.startsWith('%PDF')) {
+                    throw new Error(`Sunucu PDF döndürmedi (${pdfHeader.substring(0,10)})`);
+                }
+
+                fs.writeFileSync(pdfLocalPath, pdfBuffer);
+                console.log(`📄 PDF kaydedildi: ${pdfLocalPath} (${pdfBuffer.length} byte)`);
+
+                await whatsappPdfGonder(sender, pdfPublicUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
+                console.log(`✅ PDF gönderildi -> ${sender}`);
+
+                // Menü seçeneği gönder
+                await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
+
+                // 10 dk sonra dosyayı sil
+                setTimeout(() => {
+                    try { fs.unlinkSync(pdfLocalPath); } catch(e) {}
+                }, 600000);
+            } catch(e) {
+                console.error('PDF gönderim hatası:', e.message);
+                await whatsappGonder(sender,
+                    `⚠️ PDF gönderilemedi: ${e.message}\n\n─────────────────\n0️⃣ Ana Menüye Dön`
+                );
+            }
+            return;
+        }
+        // Başka bir tuş — hatırlat
+        await whatsappGonder(sender, `📄 PDF için *1*, Ana Menü için *0* yazınız.`);
+        return;
+    }
+
     // ── AÇIK SİPARİŞ LİSTESİNDEYKEN — numara yazılırsa detay aç (EN ÖNCE KONTROL ET) ──
     if (ses.acikMod && ses.acikSiparisler && msgTemiz !== '0') {
         const siraMatch = msgTemiz.match(/^([1-9])$/);
@@ -318,64 +372,88 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
         if (bulunan) {
             icdasSession.set(sender, { ...ses, acikMod: false, timestamp: Date.now() });
-            await whatsappGonder(sender, '⏳ Sipariş detayı hazırlanıyor...');
+            await whatsappGonder(sender, '⏳ Sipariş detayı yükleniyor...');
             try {
                 const sipNo = bulunan.SiparisNo;
                 const sipId = bulunan.Id;
 
-                // ── PDF'i kaynaktan indir (detay çekmeye gerek yok) ──
-                const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
-                const pdfSrcUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${sipId}`;
-                const pdfFileName = `siparis_${sipNo}_${Date.now()}.pdf`;
-                const pdfLocalPath = path.join(PDF_DIR, pdfFileName);
+                // Detay verilerini çek (sadece satır kırılımı için)
+                const detay = await icdasSiparisDetayGetir(sipNo, sipId);
+                const satirlar = detay.satirlar || [];
 
-                console.log(`📥 PDF indiriliyor: ${pdfSrcUrl}`);
-                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
-                const pdfBuffer = Buffer.from(pdfRes.data);
-                
-                // Gerçekten PDF mi kontrol et
-                const pdfHeader = pdfBuffer.slice(0, 5).toString('ascii');
-                if (!pdfHeader.startsWith('%PDF')) {
-                    throw new Error(`PDF değil, gelen içerik: ${pdfHeader}`);
-                }
-                
-                fs.writeFileSync(pdfLocalPath, pdfBuffer);
-                console.log(`📄 PDF kaydedildi: ${pdfLocalPath} (${pdfBuffer.length} byte)`);
+                function tekerlerMi(ad) { return (ad||'').toUpperCase().includes('TEKERLEK'); }
 
-                if (!BASE_URL) {
-                    throw new Error('BASE_URL env tanımlı değil — Render ortam değişkenlerine ekleyin');
-                }
+                const siparisEbat    = {};
+                const teslimAlinanEB = {};
+                const teslimEdilenEB = {};
+                const kalanEB        = {};
+                satirlar.forEach(s => {
+                    siparisEbat[s.urunAdi]    = s.sipMiktar;
+                    teslimAlinanEB[s.urunAdi] = s.teslimAlinan;
+                    teslimEdilenEB[s.urunAdi] = s.gonderilen;
+                    kalanEB[s.urunAdi]        = s.kalanMiktar;
+                });
 
-                const pdfPublicUrl = `${BASE_URL}/pdf/${pdfFileName}`;
-
-                // Kısa özet mesaj (bulunan objesinden — ek API çağrısı yok)
                 const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
-                let ozet = `📋 *Sipariş Detay Raporu*\n`;
-                ozet += `*Sipariş No:* ${sipNo}\n`;
-                ozet += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
-                ozet += `*Durum:* ${bulunan.DurumEtiket}\n`;
-                ozet += `*Toplam:* ${bulunan.ToplamMiktar} | *Teslim:* ${bulunan.TeslimAlinan} | *Kalan:* ${kalan}\n`;
-                ozet += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
+                const tekerUrunler = Object.keys(siparisEbat).filter(tekerlerMi);
 
-                // Fonnte dosya gönderimi — url parametresiyle
-                console.log(`📤 PDF Fonnte'ye gönderiliyor: ${pdfPublicUrl}`);
-                await whatsappPdfGonder(sender, pdfPublicUrl, ozet);
-                console.log(`✅ PDF gönderildi -> ${sender}`);
+                // ── Detay mesajı oluştur (2. resim formatı) ──
+                let dm = `🧾 *Sipariş Detayı*\n\n`;
+                dm += `*Sipariş No:* ${sipNo}\n`;
+                dm += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
+                dm += `*Durum:* ${bulunan.DurumEtiket}\n`;
 
-                // 10 dakika sonra temp dosyayı sil
-                setTimeout(() => {
-                    try { fs.unlinkSync(pdfLocalPath); console.log(`🗑 Temp PDF silindi: ${pdfFileName}`); } catch(e) {}
-                }, 600000);
+                if (tekerUrunler.length > 0) {
+                    dm += `\n📋 *Sipariş Edilen:*\n`;
+                    tekerUrunler.forEach(ad => { dm += `· ${ad} - ${siparisEbat[ad]} Adet\n`; });
+
+                    const teslimAlinanList = tekerUrunler.filter(ad => teslimAlinanEB[ad] > 0);
+                    if (teslimAlinanList.length) {
+                        dm += `\n📥 *Teslim Alınan:*\n`;
+                        teslimAlinanList.forEach(ad => { dm += `· ${ad} - ${teslimAlinanEB[ad]} Adet\n`; });
+                    }
+
+                    const teslimEdilenList = tekerUrunler.filter(ad => teslimEdilenEB[ad] > 0);
+                    if (teslimEdilenList.length) {
+                        dm += `\n📤 *Teslim Edilen:*\n`;
+                        teslimEdilenList.forEach(ad => { dm += `· ${ad} - ${teslimEdilenEB[ad]} Adet\n`; });
+                    }
+
+                    const kalanList = tekerUrunler.filter(ad => kalanEB[ad] > 0);
+                    if (kalanList.length) {
+                        dm += `\n⏳ *Kalan Sipariş:*\n`;
+                        kalanList.forEach(ad => { dm += `· ${ad} - ${kalanEB[ad]} Adet\n`; });
+                    } else {
+                        dm += `\n✅ *Kalan Sipariş:* Yok\n`;
+                    }
+                } else {
+                    // Satır detayı yoksa toplam bilgi
+                    dm += `\nToplam: ${bulunan.ToplamMiktar} | Teslim: ${bulunan.TeslimAlinan} | Kalan: ${kalan}\n`;
+                }
+
+                dm += `\n─────────────────\n`;
+                dm += `📄 Detaylı PDF için *1*\n`;
+                dm += `🔙 Ana Menüye dönmek için *0*`;
+
+                // Session'a PDF bekleme durumu kaydet
+                icdasSession.set(sender, {
+                    ...ses,
+                    acikMod: false,
+                    pdfMod: true,
+                    pdfSipId: sipId,
+                    pdfSipNo: sipNo,
+                    timestamp: Date.now()
+                });
+
+                await whatsappGonder(sender, dm);
 
             } catch(e) {
-                console.error('PDF detay hatası:', e.message);
+                console.error('Detay hatası:', e.message);
                 const kalan = (parseFloat(bulunan.ToplamMiktar)||0) - (parseFloat(bulunan.TeslimAlinan)||0);
-                // PDF gönderilemezse metin özet gönder
                 await whatsappGonder(sender,
                     `📋 *${bulunan.SiparisNo}*\n` +
                     `Tarih: ${(bulunan.SiparisTarihi||'').substring(0,10)} | Durum: ${bulunan.DurumEtiket}\n` +
                     `Toplam: ${bulunan.ToplamMiktar} | Teslim: ${bulunan.TeslimAlinan} | Kalan: ${kalan}\n` +
-                    `\n⚠️ PDF gönderilemedi: ${e.message}\n` +
                     `\n─────────────────\n0️⃣ Ana Menüye Dön`
                 );
             }
