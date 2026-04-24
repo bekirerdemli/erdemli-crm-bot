@@ -1344,11 +1344,13 @@ async function whatsappPdfGonder(target, htmlUrl, caption) {
         '--javascript-delay', '3000',
         '--load-error-handling', 'ignore',
         '--enable-local-file-access',
-        '--zoom', '1.0',
+        '--viewport-size', '1200x900',
+        '--zoom', '0.78',
         '--dpi', '150',
         '--image-quality', '100',
         '--disable-smart-shrinking',
         '--page-size', 'A4',
+        '--orientation', 'Portrait',
         '--margin-top', '0mm',
         '--margin-bottom', '0mm',
         '--margin-left', '0mm',
@@ -1356,7 +1358,6 @@ async function whatsappPdfGonder(target, htmlUrl, caption) {
         htmlUrl,
         tmpFile
     ], { timeout: 45000 });
-
     const pdfBuffer = require('fs').readFileSync(tmpFile);
     console.log(`PDF olusturuldu: ${pdfBuffer.length} byte`);
 
