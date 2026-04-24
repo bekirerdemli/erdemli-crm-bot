@@ -1461,6 +1461,88 @@ async function sheetsAuth() {
     return auth;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// KAŞE RESMİ İŞLEME — Gemini Vision ile bilgi çıkar
+// ═══════════════════════════════════════════════════════════════
+async function kaseResmiIsle(sender, resimUrl) {
+    try {
+        await whatsappGonder(sender, '🔍 Kaşe okunuyor, lütfen bekleyiniz...');
+
+        // Resmi indir → base64'e çevir
+        const resimRes = await axios.get(resimUrl, { responseType: 'arraybuffer', timeout: 15000 });
+        const resimBase64 = Buffer.from(resimRes.data).toString('base64');
+        const mimeType = resimRes.headers['content-type'] || 'image/jpeg';
+
+        // Gemini Vision ile kaşe bilgilerini çıkar
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+        const geminiBody = {
+            contents: [{
+                parts: [
+                    {
+                        text: `Bu bir firma kaşesi veya antet resmidir. Aşağıdaki bilgileri Türkçe olarak çıkar ve SADECE JSON formatında döndür, başka hiçbir şey yazma:
+{
+  "unvan": "Firma ticari ünvanı (tam adı)",
+  "cadde": "Cadde ve sokak bilgisi",
+  "ilce": "İlçe adı",
+  "il": "İl adı",
+  "vdAdi": "Vergi dairesi adı",
+  "vdNo": "Vergi numarası (sadece rakamlar)",
+  "yetkili": "Yetkili kişi adı soyadı (varsa)"
+}
+Eğer bir bilgi okunamıyorsa o alanı boş string olarak bırak. Tüm değerleri BÜYÜK HARFE çevir.`
+                    },
+                    {
+                        inline_data: { mime_type: mimeType, data: resimBase64 }
+                    }
+                ]
+            }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
+        };
+
+        const geminiRes = await axios.post(geminiUrl, geminiBody, { timeout: 20000 });
+        const rawText = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        console.log('Gemini kaşe yanıtı:', rawText);
+
+        // JSON parse
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error('Gemini JSON döndürmedi');
+        const bilgi = JSON.parse(jsonMatch[0]);
+
+        // Session'a kaydet — onay bekleniyor
+        const session = siparisSession.get(sender) || {};
+        siparisSession.set(sender, {
+            ...session,
+            state: 'awaiting_kase_onay',
+            kaseBilgi: bilgi,
+            timestamp: Date.now()
+        });
+        sessionKaydet(siparisSession);
+
+        // Kullanıcıya göster ve onay iste
+        let mesaj = '📋 *Kaşeden okunan bilgiler:*\n\n';
+        mesaj += `🏢 *Ünvan:* ${bilgi.unvan || '—'}\n`;
+        mesaj += `📍 *Cadde:* ${bilgi.cadde || '—'}\n`;
+        mesaj += `🏘️ *İlçe:* ${bilgi.ilce || '—'}\n`;
+        mesaj += `🌆 *İl:* ${bilgi.il || '—'}\n`;
+        mesaj += `🏛️ *Vergi Dairesi:* ${bilgi.vdAdi || '—'}\n`;
+        mesaj += `🔢 *Vergi No:* ${bilgi.vdNo || '—'}\n`;
+        mesaj += `👤 *Yetkili:* ${bilgi.yetkili || '—'}\n`;
+        mesaj += `\n─────────────────\n`;
+        mesaj += `✅ Kaydet için *1*\n`;
+        mesaj += `✏️ Manuel gir için *2*\n`;
+        mesaj += `❌ İptal için *0*`;
+
+        await whatsappGonder(sender, mesaj);
+
+    } catch(e) {
+        console.error('Kaşe okuma hatası:', e.message);
+        await whatsappGonder(sender,
+            '⚠️ Kaşe okunamadı. Lütfen daha net bir fotoğraf gönderin veya bilgileri manuel girin.\n\n' +
+            '✏️ Manuel kayıt için *1 Yeni müşteri kaydı oluştur* seçeneğini kullanabilirsiniz.'
+        );
+    }
+}
+
 async function cariKayitSheetsYaz(kayit) {
     try {
         const auth = await sheetsAuth();
@@ -1701,16 +1783,30 @@ async function whatsappPdfGonder(target, htmlUrl, caption) {
 app.post('/webhook', async (req, res) => {
     res.status(200).send({ status: true });
     const sender  = req.body.sender;
-    let message = req.body.message || req.body.text;
-    if (!sender || !message) { console.log('Sender veya mesaj yok'); return; }
+    let message = req.body.message || req.body.text || '';
 
-        // Grup mesajlarını tamamen yoksay — bot sadece bireysel mesajlara cevap verir
-        if (req.body.isgroup || (sender && sender.includes('@g.us'))) {
-            console.log(`🚫 Grup mesajı yoksayıldı -> ${sender}`);
+    // Grup mesajlarını tamamen yoksay
+    if (req.body.isgroup || (sender && sender.includes('@g.us'))) {
+        console.log(`🚫 Grup mesajı yoksayıldı -> ${sender}`);
+        return;
+    }
+
+    // ── KAŞE RESMİ TESPİTİ ──
+    const resimUrl = req.body.url || req.body.file || req.body.image || '';
+    const mimetype = (req.body.mimetype || req.body.type || '').toLowerCase();
+    const resimMi  = resimUrl && (mimetype.includes('image') || /\.(jpg|jpeg|png|webp)(\?|$)/i.test(resimUrl));
+
+    if (!sender) { console.log('Sender yok'); return; }
+
+    try {
+        // Resim geldi — kaşe okuma akışı
+        if (resimMi) {
+            console.log(`🖼️ Resim alındı -> ${sender} | URL: ${resimUrl}`);
+            await kaseResmiIsle(sender, resimUrl);
             return;
         }
 
-    try {
+        if (!message) { console.log('Mesaj yok'); return; }
         console.log(`\n💬 ${sender} | ${message}`);
 
         // ═══════════════════════════════════════════════════════════════
@@ -1914,6 +2010,62 @@ app.post('/webhook', async (req, res) => {
         // ═══════════════════════════════════════════════════════════════
         // YENİ MÜŞTERİ KAYIT AKIŞI
         // ═══════════════════════════════════════════════════════════════
+        // ── KAŞE ONAY AKIŞI ──
+        if (session && session.state === 'awaiting_kase_onay') {
+            if (msgNorm === '0') {
+                siparisSession.delete(sender); sessionKaydet(siparisSession);
+                await whatsappGonder(sender, '❌ İptal edildi.');
+                return;
+            }
+            if (msgNorm === '2') {
+                // Manuel kayıt akışına yönlendir
+                siparisSession.set(sender, { ...session, state: 'awaiting_kayit_unvan' });
+                sessionKaydet(siparisSession);
+                await whatsappGonder(sender, '📋 *Cari Kayıt Formu*\n\n*1/7* — Firmanızın tam ticari ünvanını yazınız:\n_(Örn: ABC TİCARET A.Ş.)_');
+                return;
+            }
+            if (msgNorm === '1') {
+                const bilgi = session.kaseBilgi || {};
+                const telefon = sender;
+                const kayit = {
+                    unvan:   bilgi.unvan   || '—',
+                    cadde:   bilgi.cadde   || '—',
+                    ilce:    bilgi.ilce    || '—',
+                    il:      bilgi.il      || '—',
+                    vdAdi:   bilgi.vdAdi   || '—',
+                    vdNo:    bilgi.vdNo    || '—',
+                    yetkili: bilgi.yetkili || '—',
+                    telefon,
+                };
+                siparisSession.delete(sender); sessionKaydet(siparisSession);
+
+                const sheetsOk = await cariKayitSheetsYaz(kayit);
+
+                if (GRUP_ID) {
+                    await whatsappGonder(GRUP_ID,
+                        `🆕 *Yeni Cari Kayıt (Kaşeden)*\n\n` +
+                        `🏢 ${kayit.unvan}\n` +
+                        `📍 ${kayit.cadde}, ${kayit.ilce} / ${kayit.il}\n` +
+                        `🏛️ ${kayit.vdAdi} — ${kayit.vdNo}\n` +
+                        `👤 ${kayit.yetkili}\n` +
+                        `📞 ${kayit.telefon}\n\n` +
+                        `${sheetsOk ? '✅ Sheets kaydı başarılı.' : '⚠️ Sheets kaydı başarısız!'}`
+                    );
+                }
+
+                await whatsappGonder(sender,
+                    `✅ *Kaydınız alındı!*\n\n` +
+                    `🏢 ${kayit.unvan}\n` +
+                    `📍 ${kayit.cadde}, ${kayit.ilce} / ${kayit.il}\n` +
+                    `🏛️ ${kayit.vdAdi} — ${kayit.vdNo}\n\n` +
+                    `Yetkilimiz en kısa sürede sizinle iletişime geçecek. 🙏`
+                );
+                return;
+            }
+            await whatsappGonder(sender, `✅ Kaydet: *1* | ✏️ Manuel gir: *2* | ❌ İptal: *0*`);
+            return;
+        }
+
         // ── CARİ KAYIT AKIŞI ──
         const buyukHarf = (s) => (s||'').trim().toLocaleUpperCase('tr-TR');
 
