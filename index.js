@@ -295,7 +295,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
     // Mesaj normalizasyonu
     const msgTemiz = message.trim();
-    const msgSayi = msgTemiz.match(/^[0-5]$/)?.[0];
+    const msgSayi = msgTemiz.match(/^[0-7]$/)?.[0];
 
     // ── SONLANDIRILMIŞ görüşme — yeni mesajda menüye dön ──
     if (ses.state === 'bitti') {
@@ -684,7 +684,8 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                         timestamp: Date.now() 
                     });
                 }
-                break;
+                await whatsappGonder(sender, mesaj);
+                return;
             }
             case '2': { // Kapalı Siparişler
                 const vS = await icdasVeriCek('siparis', null, 500);
