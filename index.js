@@ -316,7 +316,8 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
             try {
                 // Auth kaldırıldı — direkt URL Fonnte'ye ver
-                const pdfUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}&output=pdf`;
+                // wkhtmltopdf aynı sunucuda - localhost kullan (daha hızlı ve güvenli)
+                const pdfUrl = `http://localhost:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
                 console.log(`📤 PDF gönderiliyor: ${pdfUrl}`);
 
                 const pdfSendResp = await whatsappPdfGonder(sender, pdfUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
@@ -1018,17 +1019,41 @@ async function whatsappGonder(target, message) {
 }
 
 // PDF dosyası WhatsApp'a gönder — Fonnte url parametresiyle
-async function whatsappPdfGonder(target, pdfSrcUrl, caption) {
-    // PDF'i sunucuda indir → Fonnte'ye multipart/form-data ile gönder
-    console.log(`PDF indiriliyor: ${pdfSrcUrl}`);
-    const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
-    const pdfBuffer = Buffer.from(pdfRes.data);
-    console.log(`PDF boyutu: ${pdfBuffer.length} byte`);
+async function whatsappPdfGonder(target, htmlUrl, caption) {
+    // 1) PHP'nin HTML çıktısını al
+    // 2) wkhtmltopdf ile PDF'e çevir
+    // 3) Fonnte'ye multipart ile gönder
+    const { execFile } = require('child_process');
+    const { promisify } = require('util');
+    const execFileAsync = promisify(execFile);
+    const os = require('os');
+    const tmpFile = require('path').join(os.tmpdir(), `siparis_${Date.now()}.pdf`);
 
-    const magic = pdfBuffer.slice(0, 4).toString('ascii');
-    if (!magic.startsWith('%PDF')) throw new Error(`PDF degil, gelen: ${magic}`);
+    console.log(`HTML URL: ${htmlUrl}`);
+    console.log(`wkhtmltopdf ile PDF olusturuluyor: ${tmpFile}`);
 
-    // Node.js 18+ built-in FormData kullan
+    // wkhtmltopdf ile HTML → PDF (print media kullan, JS bekle)
+    await execFileAsync('wkhtmltopdf', [
+        '--quiet',
+        '--print-media-type',
+        '--no-stop-slow-scripts',
+        '--javascript-delay', '1000',
+        '--page-size', 'A4',
+        '--margin-top', '10mm',
+        '--margin-bottom', '10mm',
+        '--margin-left', '10mm',
+        '--margin-right', '10mm',
+        htmlUrl,
+        tmpFile
+    ], { timeout: 30000 });
+
+    const pdfBuffer = require('fs').readFileSync(tmpFile);
+    console.log(`PDF olusturuldu: ${pdfBuffer.length} byte`);
+
+    // Temp dosyayı sil
+    try { require('fs').unlinkSync(tmpFile); } catch(e) {}
+
+    // Fonnte'ye multipart form-data ile gönder
     const { Blob } = require('buffer');
     const form = new FormData();
     form.append('target', target);
