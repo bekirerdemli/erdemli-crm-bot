@@ -305,6 +305,65 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
     }
 
     // ── STOK DETAY MODU ──
+    // ── STOK KATEGORİ MODU ──
+    if (ses.stokKategoriMod && ses.tumStoklar) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        if (msgTemiz === '9') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
+            try {
+                const resp = await whatsappPdfGonder(sender, 'http://84.44.77.42:3939/kaulas/kstock_aktif_pdf.php', '📄 Envanter / Stok Raporu');
+                if (!resp?.data?.status) await whatsappGonder(sender, `⚠️ ${JSON.stringify(resp?.data)}`);
+                await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
+            } catch(e) {
+                await whatsappGonder(sender, `⚠️ PDF gönderilemedi: ${e.message}\n\n─────────────────\n0️⃣ Ana Menüye Dön`);
+            }
+            return;
+        }
+        const kategoriler = {
+            '1': { ad: 'Tekerlek', filtre: s => (s.StokIsmi||'').toUpperCase().includes('TEKERLEK') },
+            '2': { ad: 'Jant',     filtre: s => (s.StokIsmi||'').toUpperCase().includes('JANT') && !(s.StokIsmi||'').toUpperCase().includes('TEKERLEK') },
+            '3': { ad: 'Segman',   filtre: s => (s.StokIsmi||'').toUpperCase().includes('SEGMAN') },
+            '4': { ad: 'Yardımcı Parçalar', filtre: s => {
+                const ad = (s.StokIsmi||'').toUpperCase();
+                return !ad.includes('TEKERLEK') && !ad.includes('JANT') && !ad.includes('SEGMAN');
+            }},
+        };
+        const kat = kategoriler[msgTemiz];
+        if (!kat) {
+            await whatsappGonder(sender, `❌ Geçersiz seçim.\n\n1️⃣ Tekerlek\n2️⃣ Jant\n3️⃣ Segman\n4️⃣ Yardımcı Parçalar\n9️⃣ PDF Al\n0️⃣ Geri`);
+            return;
+        }
+        const liste = ses.tumStoklar.filter(kat.filtre);
+        if (!liste.length) {
+            await whatsappGonder(sender, `📭 ${kat.ad} kategorisinde stok bulunamadı.\n\n0️⃣ Ana Menüye Dön`);
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            return;
+        }
+        const emojiler = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣'];
+        let mesaj = `📊 *${kat.ad} Stokları*\n\n`;
+        liste.forEach((s, i) => {
+            const kalan = parseFloat(s.Kalan)||0;
+            const durum = kalan > 0 ? '🟢' : '🔴';
+            mesaj += `${emojiler[i]||`${i+1}.`} ${durum} *${s.StokIsmi}* — Kalan: ${kalan}\n`;
+        });
+        mesaj += `\nDetay için numara yazınız.\n9️⃣ Envanter PDF Al\n0️⃣ Geri`;
+        icdasSession.set(sender, {
+            ...ses,
+            stokKategoriMod: false,
+            stokMod: true,
+            stokListesi: liste,
+            tumStoklar: ses.tumStoklar,
+            timestamp: Date.now()
+        });
+        await whatsappGonder(sender, mesaj);
+        return;
+    }
+
     // ── STOK PDF MODU — kullanıcı 1 (PDF) veya 0 (menü) yazacak ──
     if (ses.stokPdfMod) {
         if (msgTemiz === '0') {
@@ -336,12 +395,15 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
 
     if (ses.stokMod && ses.stokListesi) {
         if (msgTemiz === '0') {
-            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
-            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            // Geri — kategori menüsüne dön
+            icdasSession.set(sender, { state: 'menu', stokKategoriMod: true, tumStoklar: ses.tumStoklar || [], timestamp: Date.now() });
+            let geriMesaj = '📊 *Envanter / Stok Kontrolü*\n\nHangi kategoriyi görmek istiyorsunuz?\n\n';
+            geriMesaj += '1️⃣ Tekerlek\n2️⃣ Jant\n3️⃣ Segman\n4️⃣ Yardımcı Parçalar\n\n9️⃣ Envanter PDF Al\n0️⃣ Ana Menüye Dön';
+            await whatsappGonder(sender, geriMesaj);
             return;
         }
-        // PDF isteği — liste ekranından direkt
-        if (msgTemiz === '8') {
+        // PDF isteği
+        if (msgTemiz === '9') {
             icdasSession.set(sender, { ...ses, stokMod: false, stokPdfMod: true, timestamp: Date.now() });
             await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
             try {
@@ -371,13 +433,13 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             dm += `📦 Kalan: *${kalan}* adet\n`;
             dm += `📊 Durum: ${durum}\n`;
             dm += `\n─────────────────\n`;
-            dm += `📄 Envanter PDF için *8*\n`;
-            dm += `0️⃣ Ana Menüye Dön`;
+            dm += `📄 Envanter PDF için *9*\n`;
+            dm += `0️⃣ Geri`;
             icdasSession.set(sender, { ...ses, stokPdfMod: false, timestamp: Date.now() });
             await whatsappGonder(sender, dm);
             return;
         }
-        await whatsappGonder(sender, `Geçersiz seçim. Listeden bir numara yazınız.\n─────────────────\n8️⃣ Envanter PDF\n0️⃣ Ana Menüye Dön`);
+        await whatsappGonder(sender, `Geçersiz seçim. Listeden bir numara yazınız.\n─────────────────\n9️⃣ Envanter PDF\n0️⃣ Geri`);
         return;
     }
 
@@ -788,44 +850,24 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                 await whatsappGonder(sender, mesaj);
                 return;
             }
-            case '3': { // Envanter Stok
+            case '3': { // Envanter Stok — Kategori Seçimi
                 const vSt = await icdasVeriCek('stok', null, 500);
                 const stokListe = vSt?.data?.stok?.listeler?.aktif || [];
 
-                // Tüm stoklar — tekerlek, jant, segman
-                const ilgiliStoklar = stokListe.filter(s => {
-                    const ad = (s.StokIsmi||'').toUpperCase();
-                    return ad.includes('TEKERLEK') || ad.includes('JANT') || ad.includes('SEGMAN');
+                mesaj = '📊 *Envanter / Stok Kontrolü*\n\n';
+                mesaj += 'Hangi kategoriyi görmek istiyorsunuz?\n\n';
+                mesaj += '1️⃣ Tekerlek\n';
+                mesaj += '2️⃣ Jant\n';
+                mesaj += '3️⃣ Segman\n';
+                mesaj += '4️⃣ Yardımcı Parçalar\n';
+                mesaj += '\n9️⃣ Envanter PDF Al';
+
+                icdasSession.set(sender, {
+                    state: 'menu',
+                    stokKategoriMod: true,
+                    tumStoklar: stokListe,
+                    timestamp: Date.now()
                 });
-
-                const toplamGiris = ilgiliStoklar.reduce((t, s) => t + (parseFloat(s.Giris)||0), 0);
-                const toplamCikis = ilgiliStoklar.reduce((t, s) => t + (parseFloat(s.Cikis)||0), 0);
-                const toplamKalan = ilgiliStoklar.reduce((t, s) => t + (parseFloat(s.Kalan)||0), 0);
-
-                mesaj = '📊 *Envanter / Stok Durumu*\n\n';
-                mesaj += `📥 Toplam Giriş: *${toplamGiris}* adet\n`;
-                mesaj += `📤 Toplam Çıkış: *${toplamCikis}* adet\n`;
-                mesaj += `📦 Toplam Kalan: *${toplamKalan}* adet\n`;
-                mesaj += '\n─────────────────\n';
-
-                if (ilgiliStoklar.length) {
-                    const emojiler = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣'];
-                    ilgiliStoklar.forEach((s, i) => {
-                        const kalan = parseFloat(s.Kalan)||0;
-                        const durum = kalan > 0 ? '🟢' : '🔴';
-                        mesaj += `${emojiler[i]||`${i+1}.`} ${durum} *${s.StokIsmi}* — Kalan: ${kalan}\n`;
-                    });
-                    mesaj += '\nDetay için numara yazınız.\n8️⃣ Envanter PDF Al';
-                    // Session'a stok listesi kaydet
-                    icdasSession.set(sender, {
-                        state: 'menu',
-                        stokMod: true,
-                        stokListesi: ilgiliStoklar,
-                        timestamp: Date.now()
-                    });
-                } else {
-                    mesaj += 'Stok kaydı bulunamadı.\n';
-                }
                 await whatsappGonder(sender, mesaj);
                 return;
             }
@@ -891,7 +933,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
 
     // case 1 ve case 2 kendi session'larını zaten ayarladı — üzerine yazma
     const mevcutSes = icdasSession.get(sender) || {};
-    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod) {
+    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod && !mevcutSes.stokKategoriMod) {
         // Diğer case'ler için menü footer ve session sıfırlama
         if (mesaj && !mesaj.includes('Ana Menüye Dön')) {
             mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
