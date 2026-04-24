@@ -364,19 +364,23 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         return;
     }
 
-    // ── STOK PDF MODU — kullanıcı 1 (PDF) veya 0 (menü) yazacak ──
+    // ── STOK PDF MODU — stok hareketi PDF'i gönder ──
     if (ses.stokPdfMod) {
         if (msgTemiz === '0') {
             icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
             await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
             return;
         }
-        if (msgTemiz === '1') {
+        if (msgTemiz === '9') {
             icdasSession.set(sender, { ...ses, stokPdfMod: false, timestamp: Date.now() });
             await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
             try {
-                const stokPdfUrl = 'http://84.44.77.42:3939/kaulas/kstock_aktif_pdf.php';
-                const pdfSendResp = await whatsappPdfGonder(sender, stokPdfUrl, '📄 Envanter / Stok Raporu');
+                const stokId = ses.stokPdfId || '';
+                const stokAd = ses.stokPdfAd || 'Stok';
+                if (!stokId) throw new Error('StokId bulunamadı — sunucu loguna bakın');
+                const stokPdfUrl = `http://84.44.77.42:3939/kaulas/kstock_hareket_pdf.php?StokId=${stokId}`;
+                console.log(`Stok hareket PDF URL: ${stokPdfUrl}`);
+                const pdfSendResp = await whatsappPdfGonder(sender, stokPdfUrl, `📄 ${stokAd} Stok Hareketleri`);
                 const respData = pdfSendResp?.data;
                 console.log('Stok PDF response:', JSON.stringify(respData));
                 if (!respData?.status) {
@@ -389,7 +393,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             }
             return;
         }
-        await whatsappGonder(sender, `📄 PDF için *1*, Ana Menü için *0* yazınız.`);
+        await whatsappGonder(sender, `📄 Stok Hareketleri PDF için *9*, Ana Menü için *0* yazınız.`);
         return;
     }
 
@@ -425,6 +429,10 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         if (secilen) {
             const kalan = parseFloat(secilen.Kalan)||0;
             const durum = kalan > 0 ? '🟢 Stokta Var' : '🔴 Stok Tükendi';
+            // StokId — farklı alan adlarını dene
+            const stokId = secilen.StokId || secilen.stokId || secilen.Id || secilen.id || secilen.Kod || secilen.StokKodu || '';
+            console.log('Stok obj keys:', Object.keys(secilen).join(', '));
+            console.log('StokId:', stokId);
             let dm = `📦 *Stok Detayı*\n\n`;
             dm += `*${secilen.StokIsmi}*\n`;
             dm += `─────────────────\n`;
@@ -433,9 +441,10 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             dm += `📦 Kalan: *${kalan}* adet\n`;
             dm += `📊 Durum: ${durum}\n`;
             dm += `\n─────────────────\n`;
-            dm += `📄 Envanter PDF için *9*\n`;
+            dm += `📄 Stok Hareketleri PDF için *9*\n`;
             dm += `0️⃣ Geri`;
-            icdasSession.set(sender, { ...ses, stokPdfMod: false, timestamp: Date.now() });
+            // StokId'yi session'a kaydet
+            icdasSession.set(sender, { ...ses, stokPdfMod: true, stokPdfId: stokId, stokPdfAd: secilen.StokIsmi, timestamp: Date.now() });
             await whatsappGonder(sender, dm);
             return;
         }
