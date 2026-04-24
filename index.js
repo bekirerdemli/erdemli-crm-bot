@@ -317,7 +317,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             try {
                 // Auth kaldırıldı — direkt URL Fonnte'ye ver
                 // wkhtmltopdf aynı sunucuda - localhost kullan (daha hızlı ve güvenli)
-                const pdfUrl = `http://localhost:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
+                const pdfUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
                 console.log(`📤 PDF gönderiliyor: ${pdfUrl}`);
 
                 const pdfSendResp = await whatsappPdfGonder(sender, pdfUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
@@ -1035,9 +1035,9 @@ async function whatsappPdfGonder(target, htmlUrl, caption) {
     // wkhtmltopdf ile HTML → PDF (print media kullan, JS bekle)
     await execFileAsync('wkhtmltopdf', [
         '--quiet',
-        '--print-media-type',
         '--no-stop-slow-scripts',
-        '--javascript-delay', '1000',
+        '--javascript-delay', '2000',
+        '--load-error-handling', 'ignore',
         '--page-size', 'A4',
         '--margin-top', '10mm',
         '--margin-bottom', '10mm',
