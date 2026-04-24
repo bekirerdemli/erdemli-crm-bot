@@ -335,7 +335,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         };
         const kat = kategoriler[msgTemiz];
         if (!kat) {
-            await whatsappGonder(sender, `❌ Geçersiz seçim.\n\n1️⃣ Tekerlek\n2️⃣ Jant\n3️⃣ Segman\n4️⃣ Yardımcı Parçalar\n9️⃣ PDF Al\n0️⃣ Geri`);
+            await whatsappGonder(sender, `❌ Geçersiz seçim. Lütfen 1-4 arası bir numara yazınız.\n\n1️⃣ Tekerlek\n2️⃣ Jant\n3️⃣ Segman\n4️⃣ Yardımcı Parçalar\n9️⃣ Envanter PDF Al\n0️⃣ Geri`);
             return;
         }
         const liste = ses.tumStoklar.filter(kat.filtre);
@@ -398,7 +398,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             // Geri — kategori menüsüne dön
             icdasSession.set(sender, { state: 'menu', stokKategoriMod: true, tumStoklar: ses.tumStoklar || [], timestamp: Date.now() });
             let geriMesaj = '📊 *Envanter / Stok Kontrolü*\n\nHangi kategoriyi görmek istiyorsunuz?\n\n';
-            geriMesaj += '1️⃣ Tekerlek\n2️⃣ Jant\n3️⃣ Segman\n4️⃣ Yardımcı Parçalar\n\n9️⃣ Envanter PDF Al\n0️⃣ Ana Menüye Dön';
+            geriMesaj += '1️⃣ Tekerlek\n2️⃣ Jant\n3️⃣ Segman\n4️⃣ Yardımcı Parçalar\n\n9️⃣ Envanter PDF Al\n0️⃣ Geri';
             await whatsappGonder(sender, geriMesaj);
             return;
         }
@@ -860,7 +860,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                 mesaj += '2️⃣ Jant\n';
                 mesaj += '3️⃣ Segman\n';
                 mesaj += '4️⃣ Yardımcı Parçalar\n';
-                mesaj += '\n9️⃣ Envanter PDF Al';
+                mesaj += '\n9️⃣ Envanter PDF Al\n0️⃣ Geri';
 
                 icdasSession.set(sender, {
                     state: 'menu',
