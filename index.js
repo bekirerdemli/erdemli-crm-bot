@@ -304,6 +304,143 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         return;
     }
 
+    // ── ESKİ SİPARİŞ AY/YIL BEKLEME MODU ──
+    if (ses.eskiMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        // Beklenen format: AA/YYYY veya AA.YYYY veya YYYY-AA
+        const ayYilMatch = msgTemiz.match(/^(\d{1,2})[\/\.\-](\d{4})$/) || msgTemiz.match(/^(\d{4})[\/\.\-](\d{1,2})$/);
+        if (!ayYilMatch) {
+            await whatsappGonder(sender, `❌ Geçersiz format. Lütfen ay/yıl yazın (örn: *04/2025*)\n\n0️⃣ Ana Menüye Dön`);
+            return;
+        }
+        let ay, yil;
+        if (parseInt(ayYilMatch[1]) > 12) { yil = ayYilMatch[1]; ay = ayYilMatch[2]; }
+        else { ay = ayYilMatch[1]; yil = ayYilMatch[2]; }
+        ay = ay.padStart(2, '0');
+
+        await whatsappGonder(sender, `🔍 ${ay}/${yil} siparişleri aranıyor...`);
+        try {
+            const vS = await icdasVeriCek('siparis', null, 500);
+            const tumKapali = vS?.data?.siparis?.listeler?.sonTamamlanan || [];
+            const filtrelenmis = tumKapali.filter(s => {
+                const t = (s.SiparisTarihi || '');
+                return t.startsWith(`${yil}-${ay}`) || t.startsWith(`${ay}/${yil}`);
+            });
+            if (!filtrelenmis.length) {
+                await whatsappGonder(sender, `📭 ${ay}/${yil} tarihinde kapalı sipariş bulunamadı.\n\n0️⃣ Ana Menüye Dön`);
+                icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+                return;
+            }
+            let mesaj = `✅ *${ay}/${yil} Kapalı Siparişler*\n\n`;
+            filtrelenmis.forEach((s, i) => {
+                mesaj += `${i+1}️⃣ ${s.SiparisNo} — ${(s.SiparisTarihi||'').substring(0,10)}\n`;
+            });
+            mesaj += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
+            icdasSession.set(sender, {
+                ...ses,
+                eskiMod: false,
+                kapaliMod: true,
+                kapaliSiparisler: filtrelenmis,
+                timestamp: Date.now()
+            });
+            await whatsappGonder(sender, mesaj);
+        } catch(e) {
+            await whatsappGonder(sender, `⚠️ Hata: ${e.message}\n\n0️⃣ Ana Menüye Dön`);
+        }
+        return;
+    }
+
+    // ── KAPALI SİPARİŞ LİSTESİNDEYKEN — numara yazılırsa detay aç ──
+    if (ses.kapaliMod && ses.kapaliSiparisler) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        if (msgTemiz === '7') {
+            icdasSession.set(sender, { ...ses, kapaliMod: false, eskiMod: true, timestamp: Date.now() });
+            await whatsappGonder(sender, `📅 Hangi ay ve yılı aramak istiyorsunuz?\nLütfen *AA/YYYY* formatında yazın (örn: *03/2025*)\n\n0️⃣ Ana Menüye Dön`);
+            return;
+        }
+        const siraMatch = msgTemiz.match(/^([1-9])$/);
+        let bulunan = null;
+        if (siraMatch) bulunan = ses.kapaliSiparisler[parseInt(siraMatch[1]) - 1] || null;
+
+        if (bulunan) {
+            icdasSession.set(sender, { ...ses, kapaliMod: false, timestamp: Date.now() });
+            await whatsappGonder(sender, '⏳ Sipariş detayı yükleniyor...');
+            try {
+                const sipNo = bulunan.SiparisNo;
+                const sipId = bulunan.Id;
+                const detay = await icdasSiparisDetayGetir(sipNo, sipId);
+                const satirlar = detay.satirlar || [];
+                function tekerlerMiK(ad) { return (ad||'').toUpperCase().includes('TEKERLEK'); }
+                const siparisEbat = {}, teslimAlinanEB = {}, teslimEdilenEB = {}, kalanEB = {};
+                satirlar.forEach(s => {
+                    siparisEbat[s.urunAdi]    = s.sipMiktar;
+                    teslimAlinanEB[s.urunAdi] = s.teslimAlinan;
+                    teslimEdilenEB[s.urunAdi] = s.gonderilen;
+                    kalanEB[s.urunAdi]        = s.kalanMiktar;
+                });
+                const tekerUrunler = Object.keys(siparisEbat).filter(tekerlerMiK);
+                let dm = `✅ *Sipariş Detayı*\n\n`;
+                dm += `*Sipariş No:* ${sipNo}\n`;
+                dm += `*Tarih:* ${(bulunan.SiparisTarihi||'').substring(0,10)}\n`;
+                dm += `*Durum:* ${bulunan.DurumEtiket}\n`;
+                if (tekerUrunler.length > 0) {
+                    dm += `\n📋 *Sipariş Edilen:*\n`;
+                    tekerUrunler.forEach(ad => { dm += `· ${ad} - ${siparisEbat[ad]} Adet\n`; });
+                    const teslimAlinanList = tekerUrunler.filter(ad => teslimAlinanEB[ad] > 0);
+                    if (teslimAlinanList.length) {
+                        dm += `\n📥 *Teslim Alınan:*\n`;
+                        teslimAlinanList.forEach(ad => { dm += `· ${ad} - ${teslimAlinanEB[ad]} Adet\n`; });
+                    }
+                    const teslimEdilenList = tekerUrunler.filter(ad => teslimEdilenEB[ad] > 0);
+                    if (teslimEdilenList.length) {
+                        dm += `\n📤 *Teslim Edilen:*\n`;
+                        teslimEdilenList.forEach(ad => { dm += `· ${ad} - ${teslimEdilenEB[ad]} Adet\n`; });
+                    }
+                    const kalanList = tekerUrunler.filter(ad => kalanEB[ad] > 0);
+                    if (kalanList.length) {
+                        dm += `\n⏳ *Kalan:*\n`;
+                        kalanList.forEach(ad => { dm += `· ${ad} - ${kalanEB[ad]} Adet\n`; });
+                    } else {
+                        dm += `\n✅ *Kalan:* Yok\n`;
+                    }
+                } else {
+                    dm += `\nToplam: ${bulunan.ToplamMiktar} | Teslim: ${bulunan.TeslimAlinan}\n`;
+                }
+                dm += `\n─────────────────\n`;
+                dm += `📄 Detaylı PDF için *1*\n`;
+                dm += `🔙 Ana Menüye dönmek için *0*`;
+                icdasSession.set(sender, {
+                    ...ses,
+                    kapaliMod: false,
+                    pdfMod: true,
+                    pdfSipId:    sipId,
+                    pdfSipNo:    sipNo,
+                    pdfSipTarih: bulunan.SiparisTarihi || '',
+                    pdfMusteri:  bulunan.MusteriAdi || bulunan.Musteri || '',
+                    pdfDurum:    bulunan.DurumEtiket || '',
+                    timestamp:   Date.now()
+                });
+                await whatsappGonder(sender, dm);
+            } catch(e) {
+                console.error('Kapali detay hatası:', e.message);
+                await whatsappGonder(sender,
+                    `📋 *${bulunan.SiparisNo}*\nToplam: ${bulunan.ToplamMiktar}\n─────────────────\n0️⃣ Ana Menüye Dön`
+                );
+            }
+            return;
+        }
+        await whatsappGonder(sender, `Geçersiz seçim. Listeden bir numara ya da *7* yazınız.\n─────────────────\n0️⃣ Ana Menüye Dön`);
+        return;
+    }
+
     // ── PDF BEKLEME MODU — kullanıcı 1 (PDF) veya 0 (menü) yazacak ──
     if (ses.pdfMod) {
         if (msgTemiz === '0') {
@@ -553,16 +690,25 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                 const vS = await icdasVeriCek('siparis', null, 500);
                 const kapali = vS?.data?.siparis?.listeler?.sonTamamlanan || [];
                 const ozet = vS?.data?.siparis?.ozet || {};
-                mesaj = '✅ *Kapalı Sipariş Özeti*\n\n';
-                mesaj += `Tamamlanan: ${ozet.tamamlandi || 0} sipariş\n`;
-                mesaj += `İptal: ${ozet.iptal || 0} sipariş\n\n`;
-                if (kapali.length) {
-                    mesaj += '*Son Tamamlananlar:*\n';
-                    kapali.slice(0,5).forEach(s => {
-                        mesaj += `• ${s.SiparisNo} — ${(s.SiparisTarihi||'').substring(0,10)} — ${s.ToplamMiktar} adet\n`;
+                const son6 = kapali.slice(0, 6);
+                mesaj = '✅ *Kapalı Sipariş Listesi*\n\n';
+                if (son6.length) {
+                    son6.forEach((s, i) => {
+                        mesaj += `${i+1}️⃣ ${s.SiparisNo} — ${(s.SiparisTarihi||'').substring(0,10)}\n`;
                     });
                 }
-                break;
+                mesaj += `\n7️⃣ Eski Sipariş Bul`;
+                mesaj += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
+                // Session'a kapalı listeyi kaydet
+                icdasSession.set(sender, {
+                    ...ses,
+                    kapaliMod: true,
+                    kapaliSiparisler: son6,
+                    eskiMod: false,
+                    timestamp: Date.now()
+                });
+                await whatsappGonder(sender, mesaj);
+                return;
             }
             case '3': { // Envanter Stok
                 const vSt = await icdasVeriCek('stok', null, 500);
