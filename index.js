@@ -1465,16 +1465,23 @@ async function cariKayitSheetsYaz(kayit) {
     try {
         const auth = await sheetsAuth();
         const sheets = google.sheets({ version: 'v4', auth });
-        // Sütun sırası: B=Cari Unvan, C=Cadde/Sokak, D=İlçe, E=İl, F=TÜRKİYE(sabit),
-        // G=Vergi Dairesi, H=Vergi No, I=MÜŞTERİ(sabit), J=Roberd(sabit),
-        // K=boş, L=Yetkili, M=Telefon
-        // A sütunu boş bırakılıyor — B'den başlıyoruz
+        const SHEET_ID = '1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M';
+
+        // Mevcut satır sayısını oku — A sütununa sıra numarası yazılacak
+        const mevcut = await sheets.spreadsheets.values.get({
+            spreadsheetId: SHEET_ID,
+            range: 'Cariler!A:A',
+        });
+        const satirSayisi = (mevcut.data.values || []).length; // başlık dahil
+        const siraNo = satirSayisi; // başlık satırı 1 olduğu için veri satırı = satirSayisi
+
         await sheets.spreadsheets.values.append({
-            spreadsheetId: '1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M',
-            range: 'Cariler!B:M',
+            spreadsheetId: SHEET_ID,
+            range: 'Cariler!A:M',
             valueInputOption: 'USER_ENTERED',
             requestBody: {
                 values: [[
+                    siraNo,            // A — Sıra No (satır sayısı)
                     kayit.unvan,       // B — Cari Unvan
                     kayit.cadde,       // C — Adres Cadde Sokak
                     kayit.ilce,        // D — İlçe
@@ -1490,7 +1497,7 @@ async function cariKayitSheetsYaz(kayit) {
                 ]],
             },
         });
-        console.log(`✅ Cari Sheets'e yazıldı: ${kayit.unvan}`);
+        console.log(`✅ Cari Sheets'e yazıldı: ${kayit.unvan} | Sıra: ${siraNo}`);
         return true;
     } catch(e) {
         console.error('❌ Cari Sheets yazma hatası:', e.message);
