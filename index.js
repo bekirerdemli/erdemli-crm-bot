@@ -378,7 +378,13 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 const stokId = ses.stokPdfId || '';
                 const stokAd = ses.stokPdfAd || 'Stok';
                 if (!stokId) throw new Error('StokId bulunamadı — sunucu loguna bakın');
-                const stokPdfUrl = `http://84.44.77.42:3939/kaulas/kstock_hareket_pdf.php?StokId=${stokId}`;
+                const bugun = new Date();
+                const yil = bugun.getFullYear();
+                const ay = String(bugun.getMonth()+1).padStart(2,'0');
+                const gun = String(bugun.getDate()).padStart(2,'0');
+                const baslangic = `${yil}-01-01`;
+                const bitis = `${yil}-${ay}-${gun}`;
+                const stokPdfUrl = `http://84.44.77.42:3939/kaulas/kstock_hareket_pdf.php?StokId=${stokId}&Baslangic=${baslangic}&Bitis=${bitis}`;
                 console.log(`Stok hareket PDF URL: ${stokPdfUrl}`);
                 const pdfSendResp = await whatsappPdfGonder(sender, stokPdfUrl, `📄 ${stokAd} Stok Hareketleri`);
                 const respData = pdfSendResp?.data;
@@ -393,7 +399,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             }
             return;
         }
-        await whatsappGonder(sender, `📄 Stok Hareketleri PDF için *9*, Ana Menü için *0* yazınız.`);
+        await whatsappGonder(sender, `9️⃣ Stok Hareketleri PDF için *9* yazınız.\n0️⃣ Ana Menüye Dön`);
         return;
     }
 
@@ -441,7 +447,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             dm += `📦 Kalan: *${kalan}* adet\n`;
             dm += `📊 Durum: ${durum}\n`;
             dm += `\n─────────────────\n`;
-            dm += `📄 Stok Hareketleri PDF için *9*\n`;
+            dm += `9️⃣ Stok Hareketleri PDF\n`;
             dm += `0️⃣ Geri`;
             // StokId'yi session'a kaydet
             icdasSession.set(sender, { ...ses, stokPdfMod: true, stokPdfId: stokId, stokPdfAd: secilen.StokIsmi, timestamp: Date.now() });
