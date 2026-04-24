@@ -1341,16 +1341,21 @@ async function whatsappPdfGonder(target, htmlUrl, caption) {
     await execFileAsync('wkhtmltopdf', [
         '--quiet',
         '--no-stop-slow-scripts',
-        '--javascript-delay', '2000',
+        '--javascript-delay', '3000',
         '--load-error-handling', 'ignore',
+        '--enable-local-file-access',
+        '--zoom', '1.0',
+        '--dpi', '150',
+        '--image-quality', '100',
+        '--disable-smart-shrinking',
         '--page-size', 'A4',
-        '--margin-top', '10mm',
-        '--margin-bottom', '10mm',
-        '--margin-left', '10mm',
-        '--margin-right', '10mm',
+        '--margin-top', '0mm',
+        '--margin-bottom', '0mm',
+        '--margin-left', '0mm',
+        '--margin-right', '0mm',
         htmlUrl,
         tmpFile
-    ], { timeout: 30000 });
+    ], { timeout: 45000 });
 
     const pdfBuffer = require('fs').readFileSync(tmpFile);
     console.log(`PDF olusturuldu: ${pdfBuffer.length} byte`);
