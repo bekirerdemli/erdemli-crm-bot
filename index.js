@@ -305,6 +305,110 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
     }
 
     // ── STOK DETAY MODU ──
+    // ── DOLUM SORGULAMA MODU ──
+    if (ses.dolumMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        if (msgTemiz === '1') {
+            icdasSession.set(sender, { ...ses, dolumMod: false, dolumNoMod: true, timestamp: Date.now() });
+            await whatsappGonder(sender, `🔍 *Kaulas Dolum Numarası ile Sorgula*\n\nDolum numarasını yazınız:\n\n0️⃣ Geri`);
+            return;
+        }
+        if (msgTemiz === '2') {
+            icdasSession.set(sender, { ...ses, dolumMod: false, seriNoMod: true, timestamp: Date.now() });
+            await whatsappGonder(sender, `🔍 *Lastik Seri Numarası ile Sorgula*\n\nSeri numarasını yazınız:\n\n0️⃣ Geri`);
+            return;
+        }
+        await whatsappGonder(sender, `1️⃣ Kaulas Dolum Numarası ile Sorgula\n2️⃣ Lastik Seri Numarası ile Sorgula\n0️⃣ Ana Menüye Dön`);
+        return;
+    }
+
+    // ── DOLUM NUMARA ARAMA MODU ──
+    if (ses.dolumNoMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', dolumMod: true, timestamp: Date.now() });
+            await whatsappGonder(sender, `🔧 *Tekerlek Dolum Detayı*\n\n1️⃣ Kaulas Dolum Numarası ile Sorgula\n2️⃣ Lastik Seri Numarası ile Sorgula\n\n─────────────────\n0️⃣ Ana Menüye Dön`);
+            return;
+        }
+        await whatsappGonder(sender, `🔍 *${msgTemiz}* aranıyor...`);
+        try {
+            const vD = await icdasVeriCek('dolum', null, 500);
+            const tumDolum = [
+                ...(vD?.data?.dolum?.listeler?.devamEden || []),
+                ...(vD?.data?.dolum?.listeler?.sonTamamlanan || [])
+            ];
+            const sorgu = msgTemiz.toLowerCase();
+            const bulunan = tumDolum.filter(d =>
+                (d.Kod||'').toLowerCase().includes(sorgu) ||
+                (d.DolumNo||'').toLowerCase().includes(sorgu) ||
+                (d.KaulasNo||'').toLowerCase().includes(sorgu)
+            );
+            console.log('Dolum obj keys:', tumDolum[0] ? Object.keys(tumDolum[0]).join(', ') : 'bos');
+            if (!bulunan.length) {
+                await whatsappGonder(sender, `📭 *${msgTemiz}* numaralı dolum bulunamadı.\n\n0️⃣ Geri`);
+                return;
+            }
+            let dm = `🔧 *Dolum Detayı*\n\n`;
+            bulunan.slice(0, 5).forEach(d => {
+                dm += `*No:* ${d.Kod || d.DolumNo || d.KaulasNo || '-'}\n`;
+                dm += `*Ebat:* ${d.EbatAdi || d.EbatKodu || '-'}\n`;
+                dm += `*Durum:* ${d.DurumEtiket || '-'}\n`;
+                dm += `*Tarih:* ${(d.Tarih || d.BaslangicTarihi || '').substring(0,10)}\n`;
+                if (d.SeriNo) dm += `*Seri No:* ${d.SeriNo}\n`;
+                dm += '─────────────────\n';
+            });
+            dm += '0️⃣ Geri';
+            await whatsappGonder(sender, dm);
+        } catch(e) {
+            await whatsappGonder(sender, `⚠️ Hata: ${e.message}\n\n0️⃣ Geri`);
+        }
+        return;
+    }
+
+    // ── SERİ NUMARA ARAMA MODU ──
+    if (ses.seriNoMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', dolumMod: true, timestamp: Date.now() });
+            await whatsappGonder(sender, `🔧 *Tekerlek Dolum Detayı*\n\n1️⃣ Kaulas Dolum Numarası ile Sorgula\n2️⃣ Lastik Seri Numarası ile Sorgula\n\n─────────────────\n0️⃣ Ana Menüye Dön`);
+            return;
+        }
+        await whatsappGonder(sender, `🔍 *${msgTemiz}* seri numarası aranıyor...`);
+        try {
+            const vD = await icdasVeriCek('dolum', null, 500);
+            const tumDolum = [
+                ...(vD?.data?.dolum?.listeler?.devamEden || []),
+                ...(vD?.data?.dolum?.listeler?.sonTamamlanan || [])
+            ];
+            const sorgu = msgTemiz.toLowerCase();
+            const bulunan = tumDolum.filter(d =>
+                (d.SeriNo||'').toLowerCase().includes(sorgu) ||
+                (d.LastikSeriNo||'').toLowerCase().includes(sorgu) ||
+                (d.Seri||'').toLowerCase().includes(sorgu)
+            );
+            if (!bulunan.length) {
+                await whatsappGonder(sender, `📭 *${msgTemiz}* seri numaralı lastik bulunamadı.\n\n0️⃣ Geri`);
+                return;
+            }
+            let dm = `🔧 *Lastik Detayı*\n\n`;
+            bulunan.slice(0, 5).forEach(d => {
+                dm += `*Seri No:* ${d.SeriNo || d.LastikSeriNo || d.Seri || '-'}\n`;
+                dm += `*Ebat:* ${d.EbatAdi || d.EbatKodu || '-'}\n`;
+                dm += `*Durum:* ${d.DurumEtiket || '-'}\n`;
+                dm += `*Dolum No:* ${d.Kod || d.DolumNo || '-'}\n`;
+                dm += `*Tarih:* ${(d.Tarih || d.BaslangicTarihi || '').substring(0,10)}\n`;
+                dm += '─────────────────\n';
+            });
+            dm += '0️⃣ Geri';
+            await whatsappGonder(sender, dm);
+        } catch(e) {
+            await whatsappGonder(sender, `⚠️ Hata: ${e.message}\n\n0️⃣ Geri`);
+        }
+        return;
+    }
+
     // ── İRSALİYE DETAY MODU ──
     if (ses.irsaliyeDetayMod) {
         if (msgTemiz === '0') {
@@ -1057,36 +1161,19 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                 await whatsappGonder(sender, mesaj);
                 return;
             }
-            case '5': { // Dolum Detay
-                const vD = await icdasVeriCek('dolum', null, 500);
-                const ozet = vD?.data?.dolum?.ozet || {};
-                const devamEden = vD?.data?.dolum?.listeler?.devamEden || [];
-                const tamamlanan = vD?.data?.dolum?.listeler?.sonTamamlanan || [];
-                // Ebat bazlı say
-                const ebatSayim = {};
-                [...devamEden, ...tamamlanan].forEach(d => {
-                    const ebat = (d.EbatKodu || d.EbatAdi || 'Bilinmeyen').trim();
-                    if (!ebatSayim[ebat]) ebatSayim[ebat] = { devam: 0, tamam: 0 };
-                    if (devamEden.includes(d)) ebatSayim[ebat].devam++;
-                    else ebatSayim[ebat].tamam++;
-                });
+            case '5': { // Dolum Sorgula
                 mesaj = '🔧 *Tekerlek Dolum Detayı*\n\n';
-                mesaj += `Toplam Aktif: ${ozet.toplamAktif || 0}\n`;
-                mesaj += `Devam Eden: ${ozet.devamEden || 0}\n`;
-                mesaj += `Tamamlanan: ${ozet.tamamlanan || 0}\n\n`;
-                if (Object.keys(ebatSayim).length) {
-                    mesaj += '*Ebat Bazlı Dağılım:*\n';
-                    Object.entries(ebatSayim).forEach(([ebat, c]) => {
-                        mesaj += `• ${ebat}: Devam ${c.devam} | Tamamlanan ${c.tamam}\n`;
-                    });
-                }
-                if (devamEden.length) {
-                    mesaj += '\n*Devam Eden Dolumlar:*\n';
-                    devamEden.slice(0,5).forEach(d => {
-                        mesaj += `• ${d.Kod} — ${d.EbatAdi} — ${d.DurumEtiket}\n`;
-                    });
-                }
-                break;
+                mesaj += 'Nasıl sorgulamak istiyorsunuz?\n\n';
+                mesaj += '1️⃣ Kaulas Dolum Numarası ile Sorgula\n';
+                mesaj += '2️⃣ Lastik Seri Numarası ile Sorgula\n';
+                mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
+                icdasSession.set(sender, {
+                    state: 'menu',
+                    dolumMod: true,
+                    timestamp: Date.now()
+                });
+                await whatsappGonder(sender, mesaj);
+                return;
             }
         }
     } catch(e) {
@@ -1096,7 +1183,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
 
     // case 1 ve case 2 kendi session'larını zaten ayarladı — üzerine yazma
     const mevcutSes = icdasSession.get(sender) || {};
-    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod && !mevcutSes.stokKategoriMod && !mevcutSes.irsaliyeMod && !mevcutSes.irsaliyeDetayMod && !mevcutSes.irsaliyeAyMod) {
+    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod && !mevcutSes.stokKategoriMod && !mevcutSes.irsaliyeMod && !mevcutSes.irsaliyeDetayMod && !mevcutSes.irsaliyeAyMod && !mevcutSes.dolumMod && !mevcutSes.dolumNoMod && !mevcutSes.seriNoMod) {
         // Diğer case'ler için menü footer ve session sıfırlama
         if (mesaj && !mesaj.includes('Ana Menüye Dön')) {
             mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
