@@ -351,6 +351,9 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 await whatsappGonder(sender, `📭 *${msgTemiz}* numaralı dolum bulunamadı.\n\n0️⃣ Geri`);
                 return;
             }
+            const ilk = bulunan[0];
+            const dolumId = ilk.Id || ilk.id || ilk.DolumId || '';
+            console.log('Dolum obj keys:', Object.keys(ilk).join(', '), '| Id:', dolumId);
             let dm = `🔧 *Dolum Detayı*\n\n`;
             bulunan.slice(0, 5).forEach(d => {
                 dm += `*No:* ${d.Kod || d.DolumNo || d.KaulasNo || '-'}\n`;
@@ -360,7 +363,9 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 if (d.SeriNo) dm += `*Seri No:* ${d.SeriNo}\n`;
                 dm += '─────────────────\n';
             });
+            dm += '9️⃣ Dolum Raporu PDF Al\n';
             dm += '0️⃣ Geri';
+            icdasSession.set(sender, { ...ses, dolumNoMod: false, dolumPdfMod: true, dolumPdfId: dolumId, timestamp: Date.now() });
             await whatsappGonder(sender, dm);
         } catch(e) {
             await whatsappGonder(sender, `⚠️ Hata: ${e.message}\n\n0️⃣ Geri`);
@@ -392,6 +397,8 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 await whatsappGonder(sender, `📭 *${msgTemiz}* seri numaralı lastik bulunamadı.\n\n0️⃣ Geri`);
                 return;
             }
+            const ilkS = bulunan[0];
+            const dolumIdS = ilkS.Id || ilkS.id || ilkS.DolumId || '';
             let dm = `🔧 *Lastik Detayı*\n\n`;
             bulunan.slice(0, 5).forEach(d => {
                 dm += `*Seri No:* ${d.SeriNo || d.LastikSeriNo || d.Seri || '-'}\n`;
@@ -401,11 +408,40 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 dm += `*Tarih:* ${(d.Tarih || d.BaslangicTarihi || '').substring(0,10)}\n`;
                 dm += '─────────────────\n';
             });
+            dm += '9️⃣ Dolum Raporu PDF Al\n';
             dm += '0️⃣ Geri';
+            icdasSession.set(sender, { ...ses, seriNoMod: false, dolumPdfMod: true, dolumPdfId: dolumIdS, timestamp: Date.now() });
             await whatsappGonder(sender, dm);
         } catch(e) {
             await whatsappGonder(sender, `⚠️ Hata: ${e.message}\n\n0️⃣ Geri`);
         }
+        return;
+    }
+
+    // ── DOLUM PDF MODU ──
+    if (ses.dolumPdfMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        if (msgTemiz === '9') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
+            try {
+                const dolumId = ses.dolumPdfId || '';
+                if (!dolumId) throw new Error('Dolum Id bulunamadı — logları kontrol edin');
+                const pdfUrl = `http://84.44.77.42:3939/kaulas/tireFiller_detay_pdf.php?Id=${dolumId}`;
+                console.log('Dolum PDF URL:', pdfUrl);
+                const resp = await whatsappPdfGonder(sender, pdfUrl, `📄 Dolum Raporu`);
+                if (!resp?.data?.status) await whatsappGonder(sender, `⚠️ ${JSON.stringify(resp?.data)}`);
+                await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
+            } catch(e) {
+                await whatsappGonder(sender, `⚠️ PDF gönderilemedi: ${e.message}\n\n─────────────────\n0️⃣ Ana Menüye Dön`);
+            }
+            return;
+        }
+        await whatsappGonder(sender, `9️⃣ Dolum Raporu PDF için *9* yazınız.\n0️⃣ Ana Menüye Dön`);
         return;
     }
 
@@ -1183,7 +1219,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
 
     // case 1 ve case 2 kendi session'larını zaten ayarladı — üzerine yazma
     const mevcutSes = icdasSession.get(sender) || {};
-    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod && !mevcutSes.stokKategoriMod && !mevcutSes.irsaliyeMod && !mevcutSes.irsaliyeDetayMod && !mevcutSes.irsaliyeAyMod && !mevcutSes.dolumMod && !mevcutSes.dolumNoMod && !mevcutSes.seriNoMod) {
+    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod && !mevcutSes.stokKategoriMod && !mevcutSes.irsaliyeMod && !mevcutSes.irsaliyeDetayMod && !mevcutSes.irsaliyeAyMod && !mevcutSes.dolumMod && !mevcutSes.dolumNoMod && !mevcutSes.seriNoMod && !mevcutSes.dolumPdfMod) {
         // Diğer case'ler için menü footer ve session sıfırlama
         if (mesaj && !mesaj.includes('Ana Menüye Dön')) {
             mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
