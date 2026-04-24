@@ -339,10 +339,15 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
                 const pdfPublicUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
                 console.log(`📤 PDF Fonnte'ye gönderiliyor: ${pdfPublicUrl}`);
 
-                await whatsappPdfGonder(sender, pdfPublicUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
-                console.log(`✅ PDF gönderildi -> ${sender}`);
+                const pdfSendResp = await whatsappPdfGonder(sender, pdfPublicUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
+                const respData = pdfSendResp?.data;
+                console.log(`Fonnte PDF response:`, JSON.stringify(respData));
 
-                // Menü seçeneği gönder
+                // Fonnte hata döndürdüyse detayı WhatsApp'a yaz (debug)
+                if (!respData?.status) {
+                    await whatsappGonder(sender, `⚠️ Fonnte yanıtı: ${JSON.stringify(respData)}`);
+                }
+
                 await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
             } catch(e) {
                 console.error('PDF gönderim hatası:', e.message);
