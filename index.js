@@ -1465,24 +1465,28 @@ async function cariKayitSheetsYaz(kayit) {
     try {
         const auth = await sheetsAuth();
         const sheets = google.sheets({ version: 'v4', auth });
-        const tarih = new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+        // Sütun sırası: B=Cari Unvan, C=Cadde/Sokak, D=İlçe, E=İl, F=TÜRKİYE(sabit),
+        // G=Vergi Dairesi, H=Vergi No, I=MÜŞTERİ(sabit), J=Roberd(sabit),
+        // K=boş, L=Yetkili, M=Telefon
+        // A sütunu boş bırakılıyor — B'den başlıyoruz
         await sheets.spreadsheets.values.append({
             spreadsheetId: '1IeQ3BUb4BBmXETJ_wZ0agT1DW9LpYhtc3kR-9hDNY8M',
-            range: "'Cariler'!A:K",
+            range: 'Cariler!B:M',
             valueInputOption: 'USER_ENTERED',
             requestBody: {
                 values: [[
-                    kayit.unvan,        // ÜNVANI 1
-                    kayit.caddeIlce,    // CADDEİLÇE
-                    kayit.ilUlke,       // İLÜLKE
-                    kayit.vdAdi,        // VD.ADI
-                    kayit.vdNo,         // VD.NO
-                    kayit.cariDurumu,   // Cari Durumu
-                    kayit.musteriTemsilcisi, // MÜŞTERİ TEMSİLCİSİ
-                    '',                 // Müşteri Logosu (boş bırak)
-                    kayit.yetkili,      // YETKİLİ
-                    kayit.telefon,      // TELEFON
-                    tarih               // Kayıt Tarihi
+                    kayit.unvan,       // B — Cari Unvan
+                    kayit.cadde,       // C — Adres Cadde Sokak
+                    kayit.ilce,        // D — İlçe
+                    kayit.il,          // E — İl
+                    'TÜRKİYE',         // F — Ülke (sabit)
+                    kayit.vdAdi,       // G — Vergi Dairesi
+                    kayit.vdNo,        // H — Vergi Numarası
+                    'MÜŞTERİ',         // I — Cari Durumu (sabit)
+                    'Roberd',          // J — Müşteri Temsilcisi (sabit)
+                    '',                // K — boş
+                    kayit.yetkili,     // L — Yetkili Ad Soyad
+                    kayit.telefon,     // M — Telefon
                 ]],
             },
         });
@@ -1904,52 +1908,48 @@ app.post('/webhook', async (req, res) => {
         // YENİ MÜŞTERİ KAYIT AKIŞI
         // ═══════════════════════════════════════════════════════════════
         // ── CARİ KAYIT AKIŞI ──
+        const buyukHarf = (s) => (s||'').trim().toLocaleUpperCase('tr-TR');
+
         if (session && session.state === 'awaiting_kayit_unvan') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_cadde', k_unvan: message.trim() });
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_cadde', k_unvan: buyukHarf(message) });
             sessionKaydet(siparisSession);
-            await whatsappGonder(sender, '*2/9* — Cadde / İlçe bilgisini yazınız:\n_(Örn: Atatürk Cad. No:5, Erdemli)_');
+            await whatsappGonder(sender, '*2/7* — Adres — Cadde / Sokak bilgisini yazınız:\n_(Örn: ATATÜRK CAD. NO:5)_');
             return;
         }
         if (session && session.state === 'awaiting_kayit_cadde') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_il', k_cadde: message.trim() });
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_ilce', k_cadde: buyukHarf(message) });
             sessionKaydet(siparisSession);
-            await whatsappGonder(sender, '*3/9* — İl / Ülke bilgisini yazınız:\n_(Örn: Mersin / Türkiye)_');
+            await whatsappGonder(sender, '*3/7* — İlçeyi yazınız:\n_(Örn: ERDEMLİ)_');
+            return;
+        }
+        if (session && session.state === 'awaiting_kayit_ilce') {
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_il', k_ilce: buyukHarf(message) });
+            sessionKaydet(siparisSession);
+            await whatsappGonder(sender, '*4/7* — İli yazınız:\n_(Örn: MERSİN)_');
             return;
         }
         if (session && session.state === 'awaiting_kayit_il') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_vdadi', k_il: message.trim() });
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_vdadi', k_il: buyukHarf(message) });
             sessionKaydet(siparisSession);
-            await whatsappGonder(sender, '*4/9* — Vergi Dairesi adını yazınız:\n_(Örn: Erdemli Vergi Dairesi)_');
+            await whatsappGonder(sender, '*5/7* — Vergi Dairesi adını yazınız:\n_(Örn: ERDEMLİ VERGİ DAİRESİ)_');
             return;
         }
         if (session && session.state === 'awaiting_kayit_vdadi') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_vdno', k_vdAdi: message.trim() });
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_vdno', k_vdAdi: buyukHarf(message) });
             sessionKaydet(siparisSession);
-            await whatsappGonder(sender, '*5/9* — Vergi numaranızı yazınız:');
+            await whatsappGonder(sender, '*6/7* — Vergi numarasını yazınız:');
             return;
         }
         if (session && session.state === 'awaiting_kayit_vdno') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_durum', k_vdNo: message.trim() });
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_yetkili', k_vdNo: message.trim() });
             sessionKaydet(siparisSession);
-            await whatsappGonder(sender, '*6/9* — Cari durumunu yazınız:\n_(Örn: MÜŞTERİ, POTANSİYEL MÜŞTERİ)_');
-            return;
-        }
-        if (session && session.state === 'awaiting_kayit_durum') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_temsilci', k_durum: message.trim() });
-            sessionKaydet(siparisSession);
-            await whatsappGonder(sender, '*7/9* — Müşteri temsilcisini yazınız:\n_(Örn: Ahmet Yılmaz)_');
-            return;
-        }
-        if (session && session.state === 'awaiting_kayit_temsilci') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_yetkili', k_temsilci: message.trim() });
-            sessionKaydet(siparisSession);
-            await whatsappGonder(sender, '*8/9* — Yetkili kişi adını yazınız:\n_(Örn: Mehmet Demir)_');
+            await whatsappGonder(sender, '*7/7* — Yetkili kişinin adını ve soyadını yazınız:\n_(Örn: MEHMET DEMİR)_');
             return;
         }
         if (session && session.state === 'awaiting_kayit_yetkili') {
-            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_telefon', k_yetkili: message.trim() });
+            siparisSession.set(sender, { ...session, state: 'awaiting_kayit_telefon', k_yetkili: buyukHarf(message) });
             sessionKaydet(siparisSession);
-            await whatsappGonder(sender, `*9/9* — Telefon numaranızı yazınız:\n_(WhatsApp numaranız: ${sender} — farklıysa yazınız, aynıysa "aynı" yazınız)_`);
+            await whatsappGonder(sender, `📞 Telefon numaranızı yazınız:\n_(WhatsApp: ${sender} — aynıysa *aynı* yazın)_`);
             return;
         }
         if (session && session.state === 'awaiting_kayit_telefon') {
@@ -1958,14 +1958,13 @@ app.post('/webhook', async (req, res) => {
                 ? sender : message.trim();
 
             const kayit = {
-                unvan:              session.k_unvan || '—',
-                caddeIlce:          session.k_cadde || '—',
-                ilUlke:             session.k_il    || '—',
-                vdAdi:              session.k_vdAdi || '—',
-                vdNo:               session.k_vdNo  || '—',
-                cariDurumu:         session.k_durum || 'POTANSİYEL MÜŞTERİ',
-                musteriTemsilcisi:  session.k_temsilci || '—',
-                yetkili:            session.k_yetkili  || '—',
+                unvan:   session.k_unvan || '—',
+                cadde:   session.k_cadde || '—',
+                ilce:    session.k_ilce  || '—',
+                il:      session.k_il    || '—',
+                vdAdi:   session.k_vdAdi || '—',
+                vdNo:    session.k_vdNo  || '—',
+                yetkili: session.k_yetkili || '—',
                 telefon,
             };
 
@@ -1980,10 +1979,8 @@ app.post('/webhook', async (req, res) => {
                 await whatsappGonder(GRUP_ID,
                     `🆕 *Yeni Cari Kayıt Talebi*\n\n` +
                     `🏢 Ünvan: ${kayit.unvan}\n` +
-                    `📍 Adres: ${kayit.caddeIlce} / ${kayit.ilUlke}\n` +
+                    `📍 ${kayit.cadde} — ${kayit.ilce} / ${kayit.il}\n` +
                     `🏛️ VD: ${kayit.vdAdi} — ${kayit.vdNo}\n` +
-                    `📊 Durum: ${kayit.cariDurumu}\n` +
-                    `👤 Temsilci: ${kayit.musteriTemsilcisi}\n` +
                     `🧑 Yetkili: ${kayit.yetkili}\n` +
                     `📞 Tel: ${kayit.telefon}\n\n` +
                     `${sheetsOk ? '✅ Google Sheets kaydi basarili.' : '⚠️ Sheets kaydi basarisiz!'}`
@@ -1993,9 +1990,9 @@ app.post('/webhook', async (req, res) => {
             await whatsappGonder(sender,
                 `✅ *Bilgileriniz alındı!*\n\n` +
                 `🏢 ${kayit.unvan}\n` +
-                `📍 ${kayit.caddeIlce} / ${kayit.ilUlke}\n` +
+                `📍 ${kayit.cadde}, ${kayit.ilce} / ${kayit.il}\n` +
                 `🏛️ ${kayit.vdAdi} — ${kayit.vdNo}\n` +
-                `👤 Yetkili: ${kayit.yetkili}\n\n` +
+                `🧑 Yetkili: ${kayit.yetkili}\n\n` +
                 `Yetkilimiz en kısa sürede kaydınızı oluşturup sizinle iletişime geçecek. 🙏\n\n` +
                 `📌 Kaydınız tamamlandıktan sonra *%5 RobERD indirimi* ve *özel müşteri fiyatı* avantajlarından yararlanabilirsiniz.`
             );
