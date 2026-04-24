@@ -1018,19 +1018,29 @@ async function whatsappGonder(target, message) {
 }
 
 // PDF dosyası WhatsApp'a gönder — Fonnte url parametresiyle
-async function whatsappPdfGonder(target, pdfUrl, caption) {
-    const payload = {
-        target,
-        url: pdfUrl,
-        type: 'document',
-        filename: 'siparis_detay.pdf',
-        message: caption || '',
-        countryCode: '0'
-    };
-    console.log('Fonnte PDF payload:', JSON.stringify(payload));
-    const resp = await axios.post('https://api.fonnte.com/send', payload,
-        { headers: { 'Authorization': FONNTE_TOKEN } }
-    );
+async function whatsappPdfGonder(target, pdfSrcUrl, caption) {
+    // PDF'i sunucuda indir → Fonnte'ye multipart/form-data ile gönder
+    console.log(`PDF indiriliyor: ${pdfSrcUrl}`);
+    const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
+    const pdfBuffer = Buffer.from(pdfRes.data);
+    console.log(`PDF boyutu: ${pdfBuffer.length} byte`);
+
+    const magic = pdfBuffer.slice(0, 4).toString('ascii');
+    if (!magic.startsWith('%PDF')) throw new Error(`PDF degil, gelen: ${magic}`);
+
+    // Node.js 18+ built-in FormData kullan
+    const { Blob } = require('buffer');
+    const form = new FormData();
+    form.append('target', target);
+    form.append('countryCode', '0');
+    form.append('message', caption || '');
+    form.append('file', new Blob([pdfBuffer], { type: 'application/pdf' }), 'siparis_detay.pdf');
+
+    console.log('Fonnte multipart gonderiliyor...');
+    const resp = await axios.post('https://api.fonnte.com/send', form, {
+        headers: { 'Authorization': FONNTE_TOKEN },
+        timeout: 30000
+    });
     console.log('Fonnte PDF response:', JSON.stringify(resp.data));
     return resp;
 }
