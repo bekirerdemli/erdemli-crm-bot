@@ -335,19 +335,39 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             icdasSession.set(sender, { ...ses, pdfMod: false, timestamp: Date.now() });
             await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
             try {
-                // PDF URL'ini doğrudan Fonnte'ye ver — indirip sunmaya gerek yok
-                const pdfPublicUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
-                console.log(`📤 PDF Fonnte'ye gönderiliyor: ${pdfPublicUrl}`);
+                // PDF'i indir, lokale kaydet, kendi sunucumuzdan servis et
+                const pdfSrcUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
+                const pdfFileName = `siparis_${ses.pdfSipNo}_${Date.now()}.pdf`;
+                const pdfLocalPath = path.join(PDF_DIR, pdfFileName);
 
-                const pdfSendResp = await whatsappPdfGonder(sender, pdfPublicUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
+                // İndir
+                const pdfRes = await axios.get(pdfSrcUrl, { responseType: 'arraybuffer', timeout: 20000 });
+                const pdfBuffer = Buffer.from(pdfRes.data);
+                console.log(`Content-Type: ${pdfRes.headers['content-type']} | Boyut: ${pdfBuffer.length}`);
+
+                // Header kontrolü — PDF değilse hata fırlat
+                const magic = pdfBuffer.slice(0, 5).toString('ascii');
+                if (!magic.startsWith('%PDF')) throw new Error(`PDF değil, gelen: ${magic}`);
+
+                // Lokale kaydet
+                fs.writeFileSync(pdfLocalPath, pdfBuffer);
+
+                // Kendi sunucumuzun public URL'i — Fonnte buradan indirecek
+                const publicUrl = `http://84.44.77.42:3939/pdf/${pdfFileName}`;
+                console.log(`📤 Fonnte'ye gönderiliyor: ${publicUrl}`);
+
+                const pdfSendResp = await whatsappPdfGonder(sender, publicUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
                 const respData = pdfSendResp?.data;
                 console.log(`Fonnte PDF response:`, JSON.stringify(respData));
 
-                // Fonnte hata döndürdüyse detayı WhatsApp'a yaz (debug)
                 if (!respData?.status) {
                     await whatsappGonder(sender, `⚠️ Fonnte yanıtı: ${JSON.stringify(respData)}`);
                 }
 
+                await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
+
+                // 10 dk sonra sil
+                setTimeout(() => { try { fs.unlinkSync(pdfLocalPath); } catch(e) {} }, 600000);
                 await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
             } catch(e) {
                 console.error('PDF gönderim hatası:', e.message);
