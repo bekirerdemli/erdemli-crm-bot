@@ -316,7 +316,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
             await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
             try {
                 // Auth kaldırıldı — direkt URL Fonnte'ye ver
-                const pdfUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}`;
+                const pdfUrl = `http://84.44.77.42:3939/kaulas/siparis_detay_pdf.php?Id=${ses.pdfSipId}&output=pdf`;
                 console.log(`📤 PDF gönderiliyor: ${pdfUrl}`);
 
                 const pdfSendResp = await whatsappPdfGonder(sender, pdfUrl, `📄 Sipariş No: ${ses.pdfSipNo}`);
