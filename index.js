@@ -305,6 +305,137 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
     }
 
     // ── STOK DETAY MODU ──
+    // ── İRSALİYE DETAY MODU ──
+    if (ses.irsaliyeDetayMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        if (msgTemiz === '9') {
+            // PDF gönder
+            const irs = ses.irsaliyeSecilen;
+            if (!irs) { await whatsappGonder(sender, '⚠️ İrsaliye bulunamadı.'); return; }
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, '⏳ PDF hazırlanıyor...');
+            try {
+                const irsId = irs.Id || irs.id || irs.IrsaliyeId || irs.IrsaliyeNo || '';
+                const pdfUrl = `http://84.44.77.42:3939/kaulas/irsaliye_detay_pdf.php?Id=${irsId}`;
+                console.log('İrsaliye PDF URL:', pdfUrl);
+                const resp = await whatsappPdfGonder(sender, pdfUrl, `📄 İrsaliye: ${irs.IrsaliyeNo}`);
+                if (!resp?.data?.status) await whatsappGonder(sender, `⚠️ ${JSON.stringify(resp?.data)}`);
+                await whatsappGonder(sender, `─────────────────\n0️⃣ Ana Menüye Dön`);
+            } catch(e) {
+                await whatsappGonder(sender, `⚠️ PDF gönderilemedi: ${e.message}\n\n─────────────────\n0️⃣ Ana Menüye Dön`);
+            }
+            return;
+        }
+        await whatsappGonder(sender, `9️⃣ PDF için *9*, Ana Menü için *0* yazınız.`);
+        return;
+    }
+
+    // ── İRSALİYE AY/YIL SORGULAMA MODU ──
+    if (ses.irsaliyeAyMod) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        const ayYilMatch = msgTemiz.match(/^(\d{1,2})[\/.\-](\d{4})$/) || msgTemiz.match(/^(\d{4})[\/.\-](\d{1,2})$/);
+        if (!ayYilMatch) {
+            await whatsappGonder(sender, `❌ Geçersiz format. Örn: *04/2026*\n\n0️⃣ Ana Menüye Dön`);
+            return;
+        }
+        let ay, yil;
+        if (parseInt(ayYilMatch[1]) > 12) { yil = ayYilMatch[1]; ay = ayYilMatch[2]; }
+        else { ay = ayYilMatch[1]; yil = ayYilMatch[2]; }
+        ay = ay.padStart(2, '0');
+
+        await whatsappGonder(sender, `🔍 ${ay}/${yil} irsaliyeleri aranıyor...`);
+        try {
+            const vI = await icdasVeriCek('irsaliye', null, 500);
+            const tumGiden = vI?.data?.irsaliye?.listeler?.giden || [];
+            const tumGelen = vI?.data?.irsaliye?.listeler?.gelen || [];
+
+            const filtrele = (liste) => liste.filter(i => {
+                const t = (i.IrsaliyeTarihi || '');
+                return t.startsWith(`${yil}-${ay}`) || t.startsWith(`${ay}/${yil}`) || t.startsWith(`${ay}.${yil}`);
+            });
+
+            const filtreGiden = filtrele(tumGiden);
+            const filtreGelen = filtrele(tumGelen);
+
+            if (!filtreGiden.length && !filtreGelen.length) {
+                await whatsappGonder(sender, `📭 ${ay}/${yil} tarihinde irsaliye bulunamadı.\n\n0️⃣ Ana Menüye Dön`);
+                icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+                return;
+            }
+
+            const emojiler = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣'];
+            let mesaj = `🚛 *${ay}/${yil} İrsaliyeleri*\n\n`;
+            const liste = [];
+            if (filtreGiden.length) {
+                mesaj += '📤 *Teslim Edilen:*\n';
+                filtreGiden.forEach((i, idx) => {
+                    mesaj += `${emojiler[liste.length]||`${liste.length+1}.`} ${i.IrsaliyeNo} — ${(i.IrsaliyeTarihi||'').substring(0,10)}\n`;
+                    liste.push({...i, yon: 'giden'});
+                });
+            }
+            if (filtreGelen.length) {
+                mesaj += '\n📥 *Teslim Alınan:*\n';
+                filtreGelen.forEach((i, idx) => {
+                    mesaj += `${emojiler[liste.length]||`${liste.length+1}.`} ${i.IrsaliyeNo} — ${(i.IrsaliyeTarihi||'').substring(0,10)}\n`;
+                    liste.push({...i, yon: 'gelen'});
+                });
+            }
+            mesaj += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
+            icdasSession.set(sender, {
+                state: 'menu',
+                irsaliyeMod: true,
+                irsaliyeListesi: liste,
+                timestamp: Date.now()
+            });
+            await whatsappGonder(sender, mesaj);
+        } catch(e) {
+            await whatsappGonder(sender, `⚠️ Hata: ${e.message}\n\n0️⃣ Ana Menüye Dön`);
+        }
+        return;
+    }
+
+    // ── İRSALİYE LİSTE MODU ──
+    if (ses.irsaliyeMod && ses.irsaliyeListesi) {
+        if (msgTemiz === '0') {
+            icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
+            await whatsappGonder(sender, ICDAS_MENU.replace('Merhaba!', `Merhaba${selamAdi}!`));
+            return;
+        }
+        if (msgTemiz === '9') {
+            icdasSession.set(sender, { ...ses, irsaliyeMod: false, irsaliyeAyMod: true, timestamp: Date.now() });
+            await whatsappGonder(sender, `📅 Hangi ay ve yılı sorgulamak istiyorsunuz?\nLütfen *AA/YYYY* formatında yazın (örn: *03/2026*)\n\n0️⃣ Ana Menüye Dön`);
+            return;
+        }
+        const siraMatch = msgTemiz.match(/^([1-8])$/);
+        const secilen = siraMatch ? ses.irsaliyeListesi[parseInt(siraMatch[1]) - 1] : null;
+        if (secilen) {
+            icdasSession.set(sender, { ...ses, irsaliyeMod: false, irsaliyeDetayMod: true, irsaliyeSecilen: secilen, timestamp: Date.now() });
+            const yon = secilen.yon === 'giden' ? '📤 Teslim Edilen' : '📥 Teslim Alınan';
+            let dm = `🚛 *İrsaliye Detayı*\n\n`;
+            dm += `*${secilen.IrsaliyeNo}*\n`;
+            dm += `${yon}\n`;
+            dm += `*Tarih:* ${(secilen.IrsaliyeTarihi||'').substring(0,10)}\n`;
+            dm += `*Miktar:* ${secilen.ToplamMiktar||0} adet\n`;
+            if (secilen.Aciklama) dm += `*Açıklama:* ${secilen.Aciklama}\n`;
+            console.log('İrsaliye obj keys:', Object.keys(secilen).join(', '));
+            dm += `\n─────────────────\n`;
+            dm += `9️⃣ İrsaliye PDF\n`;
+            dm += `0️⃣ Geri`;
+            await whatsappGonder(sender, dm);
+            return;
+        }
+        await whatsappGonder(sender, `Geçersiz seçim. Listeden bir numara yazınız.\n─────────────────\n9️⃣ Tarihe Göre Sorgula\n0️⃣ Ana Menüye Dön`);
+        return;
+    }
+
     // ── STOK KATEGORİ MODU ──
     if (ses.stokKategoriMod && ses.tumStoklar) {
         if (msgTemiz === '0') {
@@ -888,26 +1019,43 @@ async function icdasIslemYap(sender, secim, selamAdi) {
             }
             case '4': { // İrsaliye
                 const vI = await icdasVeriCek('irsaliye', null, 500);
-                const ozet = vI?.data?.irsaliye?.ozet || {};
-                const gidenler = vI?.data?.irsaliye?.listeler?.giden || [];
-                const gelenler = vI?.data?.irsaliye?.listeler?.gelen || [];
-                mesaj = '🚛 *İrsaliye Durumu*\n\n';
-                mesaj += `Gelen: ${ozet.gelen || 0} irsaliye\n`;
-                mesaj += `Giden: ${ozet.giden || 0} irsaliye\n`;
-                mesaj += `Bu Ay Gelen: ${ozet.gelenBuAy || 0} | Giden: ${ozet.gidenBuAy || 0}\n\n`;
+                const gidenler = (vI?.data?.irsaliye?.listeler?.giden || []).slice(0, 4);
+                const gelenler = (vI?.data?.irsaliye?.listeler?.gelen || []).slice(0, 4);
+
+                // Tüm irsaliyeler — numaralı liste için birleştir
+                // Giden: 1-4, Gelen: 5-8
+                const emojiler = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣'];
+                mesaj = '🚛 *İrsaliye Kontrolü*\n\n';
+
                 if (gidenler.length) {
-                    mesaj += '*Son Gönderimler:*\n';
-                    gidenler.slice(0,5).forEach(i => {
-                        mesaj += `• ${i.IrsaliyeNo} — ${(i.IrsaliyeTarihi||'').substring(0,10)} — ${i.ToplamMiktar} adet\n`;
+                    mesaj += '📤 *Teslim Edilen:*\n';
+                    gidenler.forEach((irs, i) => {
+                        mesaj += `${emojiler[i]} ${irs.IrsaliyeNo} — ${(irs.IrsaliyeTarihi||'').substring(0,10)}\n`;
                     });
                 }
                 if (gelenler.length) {
-                    mesaj += '\n*Son Teslim Alımlar:*\n';
-                    gelenler.slice(0,5).forEach(i => {
-                        mesaj += `• ${i.IrsaliyeNo} — ${(i.IrsaliyeTarihi||'').substring(0,10)} — ${i.ToplamMiktar} adet\n`;
+                    mesaj += '\n📥 *Teslim Alınan:*\n';
+                    gelenler.forEach((irs, i) => {
+                        mesaj += `${emojiler[gidenler.length + i]} ${irs.IrsaliyeNo} — ${(irs.IrsaliyeTarihi||'').substring(0,10)}\n`;
                     });
                 }
-                break;
+                mesaj += '\n9️⃣ Tarihe Göre İrsaliye Sorgula\n─────────────────\n0️⃣ Ana Menüye Dön';
+
+                // Tüm listeyi session'a kaydet
+                const irsaliyeListesi = [
+                    ...gidenler.map(i => ({...i, yon: 'giden'})),
+                    ...gelenler.map(i => ({...i, yon: 'gelen'}))
+                ];
+                icdasSession.set(sender, {
+                    state: 'menu',
+                    irsaliyeMod: true,
+                    irsaliyeListesi,
+                    tumGiden: vI?.data?.irsaliye?.listeler?.giden || [],
+                    tumGelen: vI?.data?.irsaliye?.listeler?.gelen || [],
+                    timestamp: Date.now()
+                });
+                await whatsappGonder(sender, mesaj);
+                return;
             }
             case '5': { // Dolum Detay
                 const vD = await icdasVeriCek('dolum', null, 500);
@@ -948,7 +1096,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
 
     // case 1 ve case 2 kendi session'larını zaten ayarladı — üzerine yazma
     const mevcutSes = icdasSession.get(sender) || {};
-    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod && !mevcutSes.stokKategoriMod) {
+    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod && !mevcutSes.stokMod && !mevcutSes.stokPdfMod && !mevcutSes.stokKategoriMod && !mevcutSes.irsaliyeMod && !mevcutSes.irsaliyeDetayMod && !mevcutSes.irsaliyeAyMod) {
         // Diğer case'ler için menü footer ve session sıfırlama
         if (mesaj && !mesaj.includes('Ana Menüye Dön')) {
             mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
