@@ -2273,4 +2273,4 @@ try {
 } catch(e) {}
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`RobERD - Erdemli CRM Bot ${PORT} portunda çalışıyor.`));
+app.listen(PORT, '0.0.0.0', () => console.log(`RobERD - Erdemli CRM Bot ${PORT} portunda çalışıyor.`));
