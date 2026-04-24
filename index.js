@@ -701,7 +701,7 @@ async function icdasIslemYap(sender, secim, selamAdi) {
                 mesaj += `\n─────────────────\n0️⃣ Ana Menüye Dön`;
                 // Session'a kapalı listeyi kaydet
                 icdasSession.set(sender, {
-                    ...ses,
+                    state: 'menu',
                     kapaliMod: true,
                     kapaliSiparisler: son6,
                     eskiMod: false,
@@ -787,14 +787,14 @@ async function icdasIslemYap(sender, secim, selamAdi) {
         mesaj = 'Sisteme şu an ulaşamıyorum, lütfen tekrar deneyin.';
     }
 
-    // case 1 kendi menüsünü zaten ekliyor, diğerleri için ekle
-    if (!mesaj.includes('0️⃣ Ana Menüye Dön')) {
-        mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
-    }
-    await whatsappGonder(sender, mesaj);
-    // case 1 kendi session'ını zaten ayarladı — üzerine yazma
+    // case 1 ve case 2 kendi session'larını zaten ayarladı — üzerine yazma
     const mevcutSes = icdasSession.get(sender) || {};
-    if (!mevcutSes.acikMod) {
+    if (!mevcutSes.acikMod && !mevcutSes.kapaliMod) {
+        // Diğer case'ler için menü footer ve session sıfırlama
+        if (mesaj && !mesaj.includes('Ana Menüye Dön')) {
+            mesaj += '\n─────────────────\n0️⃣ Ana Menüye Dön';
+        }
+        if (mesaj) await whatsappGonder(sender, mesaj);
         icdasSession.set(sender, { state: 'menu', timestamp: Date.now() });
     }
     console.log(`✅ İçdaş seçim ${secim} işlendi -> ${sender}`);
