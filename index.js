@@ -314,7 +314,7 @@ async function icdasCevapla(sender, message, yetkiliAdi) {
         }
         if (msgTemiz === '1') {
             icdasSession.set(sender, { ...ses, dolumMod: false, dolumNoMod: true, timestamp: Date.now() });
-            await whatsappGonder(sender, `🔍 *Kaulas Dolum Numarası ile Sorgula*\n\nDolum numarasını yazınız:\n\n0️⃣ Geri`);
+            await whatsappGonder(sender, `🔍 *Kaulas Dolum Numarası ile Sorgula*\n\nDolum numarasını yazınız:\n_(Örn: *KD-000110*)_\n\n0️⃣ Geri`);
             return;
         }
         if (msgTemiz === '2') {
