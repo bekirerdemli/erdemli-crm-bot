@@ -1468,52 +1468,37 @@ async function kaseResmiIsle(sender, resimUrl) {
     try {
         await whatsappGonder(sender, '🔍 Kaşe okunuyor, lütfen bekleyiniz...');
 
-        // Fonnte resim URL'si dışarıdan erişime kapalı
-        // Çözüm: Fonnte /download API'si ile resmi al
+        // Gemini'ye URL'yi direkt ver — Gemini kendi indirir
+        const prompt = `Bu bir firma kasesi veya antet resmidir. Asagidaki bilgileri Turkce olarak cikar ve SADECE JSON formatinda dondur, baska hicbir sey yazma: {"unvan":"Firma ticari unvani","cadde":"Cadde ve sokak bilgisi","ilce":"Ilce adi","il":"Il adi","vdAdi":"Vergi dairesi adi","vdNo":"Vergi numarasi sadece rakamlar","yetkili":"Yetkili kisi adi soyadi varsa"} Eger bir bilgi okunamiyor ise o alani bos string olarak birak. Tum degerleri BUYUK HARFE cevir.`;
+
+        // Önce URL ile dene (Gemini kendi indirir)
         let resimBase64 = null;
         let mimeType = 'image/jpeg';
 
-        // Yöntem 1: Fonnte download API
+        // Render sunucusundan indirmeyi dene (Render IP'si erişebilir olabilir)
         try {
-            const dlRes = await axios.post('https://api.fonnte.com/download-file', {
-                url: resimUrl
-            }, {
-                headers: { 'Authorization': FONNTE_TOKEN },
+            const dlRes = await axios.get(resimUrl, {
                 responseType: 'arraybuffer',
-                timeout: 20000
+                timeout: 20000,
+                headers: { 'User-Agent': 'WhatsApp/2.23.24.82 A' }
             });
             resimBase64 = Buffer.from(dlRes.data).toString('base64');
             mimeType = (dlRes.headers['content-type'] || 'image/jpeg').split(';')[0].trim();
-            console.log(`✅ Fonnte download API ile indirildi: ${resimBase64.length} chars`);
-        } catch(e1) {
-            console.log('Fonnte download API başarısız:', e1.message);
-            // Yöntem 2: Doğrudan GET (farklı header'larla)
-            try {
-                const dlRes2 = await axios.get(resimUrl, {
-                    responseType: 'arraybuffer',
-                    timeout: 20000,
-                    headers: { 'Authorization': `Bearer ${FONNTE_TOKEN}` }
-                });
-                resimBase64 = Buffer.from(dlRes2.data).toString('base64');
-                mimeType = (dlRes2.headers['content-type'] || 'image/jpeg').split(';')[0].trim();
-                console.log(`✅ Bearer token ile indirildi`);
-            } catch(e2) {
-                console.log('Bearer token başarısız:', e2.message);
-            }
+            console.log(`✅ Resim indirildi: ${resimBase64.length} chars`);
+        } catch(e) {
+            console.log('Resim indirilemedi:', e.message);
         }
 
-        if (!resimBase64) throw new Error('Resim indirilemedi — Fonnte panelinde "Inbox" veya "Forward attachment" ayarını açın');
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
-        // Gemini Vision ile kaşe bilgilerini çıkar
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-        const prompt = `Bu bir firma kasesi veya antet resmidir. Asagidaki bilgileri Turkce olarak cikar ve SADECE JSON formatinda dondur, baska hicbir sey yazma: {"unvan":"Firma ticari unvani","cadde":"Cadde ve sokak bilgisi","ilce":"Ilce adi","il":"Il adi","vdAdi":"Vergi dairesi adi","vdNo":"Vergi numarasi sadece rakamlar","yetkili":"Yetkili kisi adi soyadi varsa"} Eger bir bilgi okunamiyor ise o alani bos string olarak birak. Tum degerleri BUYUK HARFE cevir.`;
+        // Gemini body — base64 varsa inline, yoksa URL ile
+        const imagePart = resimBase64
+            ? { inline_data: { mime_type: mimeType, data: resimBase64 } }
+            : { file_data: { mime_type: 'image/jpeg', file_uri: resimUrl } };
 
         const geminiBody = {
             contents: [{
-                parts: [
-                    { text: prompt },
-                    { inline_data: { mime_type: mimeType, data: resimBase64 } }
-                ]
+                parts: [ { text: prompt }, imagePart ]
             }],
             generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
         };
