@@ -1468,33 +1468,33 @@ async function kaseResmiIsle(sender, resimUrl) {
     try {
         await whatsappGonder(sender, '🔍 Kaşe okunuyor, lütfen bekleyiniz...');
 
-        // Resmi indir → base64'e çevir
-        const resimRes = await axios.get(resimUrl, { responseType: 'arraybuffer', timeout: 15000 });
-        const resimBase64 = Buffer.from(resimRes.data).toString('base64');
-        const mimeType = resimRes.headers['content-type'] || 'image/jpeg';
+        // Resmi indir — Fonnte URL'si auth gerektiriyorsa header ile dene
+        let resimBase64, mimeType;
+        try {
+            const resimRes = await axios.get(resimUrl, {
+                responseType: 'arraybuffer',
+                timeout: 20000,
+                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'image/*' }
+            });
+            resimBase64 = Buffer.from(resimRes.data).toString('base64');
+            mimeType = (resimRes.headers['content-type'] || 'image/jpeg').split(';')[0].trim();
+        } catch(downloadErr) {
+            console.log('Direkt indirme başarısız, URL ile Gemini deneniyor:', downloadErr.message);
+            resimBase64 = null;
+            mimeType = 'image/jpeg';
+        }
 
         // Gemini Vision ile kaşe bilgilerini çıkar
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+        const prompt = `Bu bir firma kaşesi veya antet resmidir. Aşağıdaki bilgileri Türkçe olarak çıkar ve SADECE JSON formatında döndür, başka hiçbir şey yazma:\n{\n  "unvan": "Firma ticari unvani",\n  "cadde": "Cadde ve sokak bilgisi",\n  "ilce": "Ilce adi",\n  "il": "Il adi",\n  "vdAdi": "Vergi dairesi adi",\n  "vdNo": "Vergi numarasi sadece rakamlar",\n  "yetkili": "Yetkili kisi adi soyadi varsa"\n}\nEger bir bilgi okunamiyor ise o alani bos string olarak birak. Tum degerleri BUYUK HARFE cevir.`;
+
+        const imagePart = resimBase64
+            ? { inline_data: { mime_type: mimeType, data: resimBase64 } }
+            : { file_data: { mime_type: 'image/jpeg', file_uri: resimUrl } };
+
         const geminiBody = {
             contents: [{
-                parts: [
-                    {
-                        text: `Bu bir firma kaşesi veya antet resmidir. Aşağıdaki bilgileri Türkçe olarak çıkar ve SADECE JSON formatında döndür, başka hiçbir şey yazma:
-{
-  "unvan": "Firma ticari ünvanı (tam adı)",
-  "cadde": "Cadde ve sokak bilgisi",
-  "ilce": "İlçe adı",
-  "il": "İl adı",
-  "vdAdi": "Vergi dairesi adı",
-  "vdNo": "Vergi numarası (sadece rakamlar)",
-  "yetkili": "Yetkili kişi adı soyadı (varsa)"
-}
-Eğer bir bilgi okunamıyorsa o alanı boş string olarak bırak. Tüm değerleri BÜYÜK HARFE çevir.`
-                    },
-                    {
-                        inline_data: { mime_type: mimeType, data: resimBase64 }
-                    }
-                ]
+                parts: [ { text: prompt }, imagePart ]
             }],
             generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
         };
