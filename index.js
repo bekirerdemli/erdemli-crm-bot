@@ -1489,7 +1489,7 @@ async function kaseResmiIsle(sender, resimUrl) {
             console.log('Resim indirilemedi:', e.message);
         }
 
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
         // Gemini body — base64 varsa inline, yoksa URL ile
         const imagePart = resimBase64
