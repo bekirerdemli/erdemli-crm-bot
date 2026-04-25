@@ -1500,17 +1500,45 @@ async function kaseResmiIsle(sender, resimUrl) {
             contents: [{
                 parts: [ { text: prompt }, imagePart ]
             }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
+            generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
         };
 
         const geminiRes = await axios.post(geminiUrl, geminiBody, { timeout: 20000 });
         const rawText = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
         console.log('Gemini kaşe yanıtı:', rawText);
 
-        // JSON parse
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error('Gemini JSON döndürmedi');
-        const bilgi = JSON.parse(jsonMatch[0]);
+        // JSON parse — ```json bloğunu temizle, kesilmiş JSON'u düzelt
+        let jsonStr = rawText
+            .replace(/```json\s*/gi, '')
+            .replace(/```\s*/g, '')
+            .trim();
+
+        // { ile başlayan kısmı bul
+        const startIdx = jsonStr.indexOf('{');
+        const endIdx = jsonStr.lastIndexOf('}');
+        if (startIdx === -1) throw new Error('Gemini JSON blogu bulunamadi: ' + rawText.substring(0, 100));
+        
+        // Eğer JSON kesilmişse eksik kapanış parantezlerini tamamla
+        if (endIdx === -1 || endIdx < startIdx) {
+            jsonStr = jsonStr.substring(startIdx) + '"}';
+        } else {
+            jsonStr = jsonStr.substring(startIdx, endIdx + 1);
+        }
+        
+        let bilgi;
+        try {
+            bilgi = JSON.parse(jsonStr);
+        } catch(parseErr) {
+            // Kesilmiş string'leri düzelt — her değeri regex ile çıkar
+            console.log('JSON parse hatası, regex ile çözümleniyor:', parseErr.message);
+            bilgi = {};
+            const alanlar = ['unvan', 'cadde', 'ilce', 'il', 'vdAdi', 'vdNo', 'yetkili'];
+            alanlar.forEach(alan => {
+                const m = rawText.match(new RegExp(`"${alan}"\s*:\s*"([^"]*)`));
+                if (m) bilgi[alan] = m[1].trim();
+                else bilgi[alan] = '';
+            });
+        }
 
         // Session'a kaydet — onay bekleniyor
         const session = siparisSession.get(sender) || {};
