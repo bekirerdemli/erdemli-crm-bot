@@ -1468,18 +1468,23 @@ async function kaseResmiIsle(sender, resimUrl) {
     try {
         await whatsappGonder(sender, '🔍 Kaşe okunuyor, lütfen bekleyiniz...');
 
-        // Resmi indir — Fonnte URL'si auth gerektiriyorsa header ile dene
+        // Resmi indir — Fonnte token ile auth gerekiyor
         let resimBase64, mimeType;
         try {
             const resimRes = await axios.get(resimUrl, {
                 responseType: 'arraybuffer',
                 timeout: 20000,
-                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'image/*' }
+                headers: {
+                    'Authorization': FONNTE_TOKEN,
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'image/*'
+                }
             });
             resimBase64 = Buffer.from(resimRes.data).toString('base64');
             mimeType = (resimRes.headers['content-type'] || 'image/jpeg').split(';')[0].trim();
+            console.log(`✅ Resim indirildi: ${resimBase64.length} chars | type: ${mimeType}`);
         } catch(downloadErr) {
-            console.log('Direkt indirme başarısız, URL ile Gemini deneniyor:', downloadErr.message);
+            console.log('Fonnte token ile indirme başarısız:', downloadErr.message);
             resimBase64 = null;
             mimeType = 'image/jpeg';
         }
