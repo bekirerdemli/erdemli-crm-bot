@@ -1895,8 +1895,10 @@ app.post('/webhook', async (req, res) => {
         // ═══════════════════════════════════════════════════════════════
         // MENÜ AKIŞI — İlk selamlama veya menü bekleniyor
         // ═══════════════════════════════════════════════════════════════
-        const selamlama = /^(MERHABA|SELAM|SA|HEY|İYİ|IYI|GÜNAYD|GUNAYD|HOSGELDIN|HOSGELDI|AÇIN|ACIN|HI|HELLO|TEKRAR|YENİ|YENI)/i.test(message.trim()) ||
-                          message.trim().length <= 8;
+        const selamlama = (/^(MERHABA|SELAM|SA|HEY|IYI|GUNAYD|HOSGELDIN|HOSGELDI|ACIN|HI|HELLO|TEKRAR|YENI)/i.test(message.trim()) ||
+                          message.trim().length <= 8) &&
+                          !session?.state?.startsWith('awaiting_kayit') &&
+                          !session?.state?.startsWith('awaiting_kase');
 
         // İlk mesaj veya selamlama → menü göster
         if (!session || session.state === null) {
