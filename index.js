@@ -1535,10 +1535,10 @@ Eğer bir bilgi okunamıyorsa o alanı boş string olarak bırak. Tüm değerler
         await whatsappGonder(sender, mesaj);
 
     } catch(e) {
-        console.error('Kaşe okuma hatası:', e.message);
+        console.error('Kaşe okuma hatası:', e.message, e.response?.data);
         await whatsappGonder(sender,
-            '⚠️ Kaşe okunamadı. Lütfen daha net bir fotoğraf gönderin veya bilgileri manuel girin.\n\n' +
-            '✏️ Manuel kayıt için *1 Yeni müşteri kaydı oluştur* seçeneğini kullanabilirsiniz.'
+            `⚠️ Kaşe okunamadı: ${e.message}\n\n` +
+            '✏️ Manuel kayıt için menüden *1 Yeni müşteri kaydı oluştur* seçeneğini kullanabilirsiniz.'
         );
     }
 }
@@ -1792,9 +1792,15 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── KAŞE RESMİ TESPİTİ ──
-    const resimUrl = req.body.url || req.body.file || req.body.image || '';
-    const mimetype = (req.body.mimetype || req.body.type || '').toLowerCase();
-    const resimMi  = resimUrl && (mimetype.includes('image') || /\.(jpg|jpeg|png|webp)(\?|$)/i.test(resimUrl));
+    // Fonnte resim field tespiti — tüm olası alanları kontrol et
+    const resimUrl = req.body.url || req.body.file || req.body.image || req.body.fileUrl || req.body.mediaUrl || '';
+    const mimetype = (req.body.mimetype || req.body.type || req.body.fileType || '').toLowerCase();
+    const resimMi  = resimUrl && (
+        mimetype.includes('image') ||
+        /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(resimUrl) ||
+        req.body.type === 'image'
+    );
+    console.log(`📦 Webhook body: sender=${sender} | message="${message}" | url=${resimUrl} | mimetype=${mimetype} | type=${req.body.type}`);
 
     if (!sender) { console.log('Sender yok'); return; }
 
