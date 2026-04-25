@@ -1801,6 +1801,10 @@ app.post('/webhook', async (req, res) => {
         req.body.type === 'image'
     );
     console.log(`📦 Webhook body: sender=${sender} | message="${message}" | url=${resimUrl} | mimetype=${mimetype} | type=${req.body.type}`);
+    // DEBUG — resim geldiğinde tam body'yi WhatsApp'a yaz
+    if (resimUrl || req.body.type === 'image' || mimetype.includes('image')) {
+        await whatsappGonder(sender, `🔧 DEBUG body:\ntype=${req.body.type}\nurl=${req.body.url}\nfile=${req.body.file}\nmimetype=${req.body.mimetype}\nmessage=${String(req.body.message||'').substring(0,50)}`);
+    }
 
     if (!sender) { console.log('Sender yok'); return; }
 
