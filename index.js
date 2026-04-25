@@ -2013,7 +2013,7 @@ app.post('/webhook', async (req, res) => {
                         siparisSession.set(sender, { ...session, state: 'awaiting_kayit_yontem' });
                         sessionKaydet(siparisSession);
                         await whatsappGonder(sender, '📋 *Yeni Cari Kaydı*\n\nNasıl kayıt olmak istiyorsunuz?\n\n1️⃣ Kaşe / Vergi Levhası resmi gönder\n2️⃣ Manuel giriş yap\n\n0️⃣ Geri');
-                    case 2: // Fiyat
+                        return;
                         {
                             const MARKALAR = ['DINGLI','ELS','GENIE','HAULOTTE','JLG','LGMG','MANTALL','SINOBOOM','SNORKEL','ZOOMLION'];
                             const emojiR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
