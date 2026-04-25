@@ -1833,18 +1833,20 @@ app.post('/webhook', async (req, res) => {
         req.body.type === 'image'
     );
     console.log(`📦 Webhook body: sender=${sender} | message="${message}" | url=${resimUrl} | mimetype=${mimetype} | type=${req.body.type}`);
-    // DEBUG — resim geldiğinde tam body'yi WhatsApp'a yaz
-    if (resimUrl || req.body.type === 'image' || mimetype.includes('image')) {
-        await whatsappGonder(sender, `🔧 DEBUG body:\ntype=${req.body.type}\nurl=${req.body.url}\nfile=${req.body.file}\nmimetype=${req.body.mimetype}\nmessage=${String(req.body.message||'').substring(0,50)}`);
-    }
 
     if (!sender) { console.log('Sender yok'); return; }
 
     try {
-        // Resim geldi — kaşe okuma akışı
+        // Resim geldi — kaşe bekleniyor mu kontrol et
         if (resimMi) {
             console.log(`🖼️ Resim alındı -> ${sender} | URL: ${resimUrl}`);
-            await kaseResmiIsle(sender, resimUrl);
+            // Sadece kaşe bekleme modundaysa işle
+            const sesSonraki = siparisSession.get(sender) || {};
+            if (sesSonraki.state === 'awaiting_kase_resim' || sesSonraki.state === 'awaiting_kase_onay') {
+                await kaseResmiIsle(sender, resimUrl);
+            } else {
+                console.log('Resim beklenmiyordu, yoksayıldı.');
+            }
             return;
         }
 
@@ -2005,10 +2007,10 @@ app.post('/webhook', async (req, res) => {
                 // YENİ MÜŞTERİ MENÜSÜ
                 switch (secim) {
                     case 1: // Yeni kayıt
-                        siparisSession.set(sender, { ...session, state: 'awaiting_kayit_unvan' });
+                    case 1: // Yeni kayıt — kaşe veya manuel seçimi
+                        siparisSession.set(sender, { ...session, state: 'awaiting_kayit_yontem' });
                         sessionKaydet(siparisSession);
-                        await whatsappGonder(sender, '📋 *Cari Kayıt Formu*\n\n*1/9* — Firmanızın tam ticari ünvanını yazınız:\n_(Örn: ABC Ticaret A.Ş.)_');
-                        return;
+                        await whatsappGonder(sender, '📋 *Yeni Cari Kaydı*\n\nNasıl kayıt olmak istiyorsunuz?\n\n1️⃣ Kaşe / Vergi Levhası resmi gönder\n2️⃣ Manuel giriş yap\n\n0️⃣ Geri');
                     case 2: // Fiyat
                         {
                             const MARKALAR = ['DINGLI','ELS','GENIE','HAULOTTE','JLG','LGMG','MANTALL','SINOBOOM','SNORKEL','ZOOMLION'];
@@ -2068,7 +2070,6 @@ app.post('/webhook', async (req, res) => {
             }
             if (msgNorm === '1') {
                 const bilgi = session.kaseBilgi || {};
-                const telefon = sender;
                 const kayit = {
                     unvan:   bilgi.unvan   || '—',
                     cadde:   bilgi.cadde   || '—',
@@ -2076,7 +2077,7 @@ app.post('/webhook', async (req, res) => {
                     il:      bilgi.il      || '—',
                     vdAdi:   bilgi.vdAdi   || '—',
                     vdNo:    bilgi.vdNo    || '—',
-                    yetkili: bilgi.yetkili || '—',
+                    yetkili: bilgi.yetkili || bilgi.unvan || '—',  // Yetkili yoksa cari adını kullan
                     telefon,
                 };
                 siparisSession.delete(sender); sessionKaydet(siparisSession);
@@ -2105,6 +2106,31 @@ app.post('/webhook', async (req, res) => {
                 return;
             }
             await whatsappGonder(sender, `✅ Kaydet: *1* | ✏️ Manuel gir: *2* | ❌ İptal: *0*`);
+            return;
+        }
+
+        // ── KAYIT YÖNTEM SEÇİMİ ──
+        if (session && session.state === 'awaiting_kayit_yontem') {
+            if (msgNorm === '0') {
+                siparisSession.delete(sender); sessionKaydet(siparisSession);
+                await whatsappGonder(sender, '❌ İptal edildi.');
+                return;
+            }
+            if (msgNorm === '1') {
+                // Kaşe yolu — kaşe bekleme moduna al
+                siparisSession.set(sender, { ...session, state: 'awaiting_kase_resim' });
+                sessionKaydet(siparisSession);
+                await whatsappGonder(sender, '📸 Kaşe veya Vergi Levhası fotoğrafını gönderin.');
+                return;
+            }
+            if (msgNorm === '2') {
+                // Manuel giriş
+                siparisSession.set(sender, { ...session, state: 'awaiting_kayit_unvan' });
+                sessionKaydet(siparisSession);
+                await whatsappGonder(sender, '📋 *Cari Kayıt Formu*\n\n*1/7* — Firmanızın tam ticari ünvanını yazınız:\n_(Örn: ABC TİCARET A.Ş.)_');
+                return;
+            }
+            await whatsappGonder(sender, '1️⃣ Kaşe gönder\n2️⃣ Manuel giriş\n0️⃣ Geri');
             return;
         }
 
