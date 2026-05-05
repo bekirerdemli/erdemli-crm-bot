@@ -606,44 +606,46 @@ app.post('/webhook', async (req, res) => {
 
         // ─── MENÜ SEÇİMİ ───
         if (session && session.state === 'awaiting_menu') {
-            const secim = parseInt(message.trim());
+            let secim = parseInt(message.trim());
             const kayitli = session.kayitli;
 
-            // Sayı değilse — mesajdan niyeti anla ve o seçeneğe yönlendir
+            // Sayı değilse — mesajdan niyeti anla
             if (isNaN(secim) || secim < 1) {
-                const msgLower = message.toLowerCase().trim();
-
-                // Hızlı keyword eşleşmesi (Gemini'ye gerek kalmadan)
+                // Türkçe büyük harf → küçük harf (JS toLowerCase İ'yi düzgün çevirmiyor)
+                const normalizeTR = (s) => s
+                    .replace(/İ/g,'i').replace(/I/g,'ı')
+                    .replace(/Ş/g,'ş').replace(/Ğ/g,'ğ')
+                    .replace(/Ü/g,'ü').replace(/Ö/g,'ö')
+                    .replace(/Ç/g,'ç').toLowerCase();
+                const msgLower = normalizeTR(message.trim());
                 let anlasilanSecim = 0;
 
                 if (kayitli) {
-                    if (/bak[ıi]ye|borç|borc|bor[çc]|ne kadar|bakiye|ödeme durumu|borcum/.test(msgLower)) anlasilanSecim = 1;
-                    else if (/lastik|fiyat|ne kadar|ücret|liste|teklif|fiyatı|para/.test(msgLower)) anlasilanSecim = 2;
-                    else if (/sipariş|siparis|almak|satın|al$|order|istiyorum/.test(msgLower)) anlasilanSecim = 3;
-                    else if (/şikayet|sikayet|öneri|oneri|sorun|problem|şikâyet/.test(msgLower)) anlasilanSecim = 4;
-                    else if (/jant|eksik|teslim|gelme|almad/.test(msgLower)) anlasilanSecim = 5;
-                    else if (/açık|acik|bekleyen|sipari[sş] durumu|siparişlerim/.test(msgLower)) anlasilanSecim = 6;
-                    else if (/fatura|ödeme|odeme|tahsilat|fiş|makbuz|hesap/.test(msgLower)) anlasilanSecim = 7;
+                    if (/bakiye|borcum|bakiyem|ne kadar.*bor|borç.*sorgula/.test(msgLower)) anlasilanSecim = 1;
+                    else if (/lastik.*fiyat|fiyat.*lastik|lastik.*ne kadar|ne kadar.*lastik|fiyat.*öğren|teklif.*ver/.test(msgLower)) anlasilanSecim = 2;
+                    else if (/sipariş.*ver|siparis.*ver|lastik.*al|sipariş.*vermek|siparis.*vermek/.test(msgLower)) anlasilanSecim = 3;
+                    else if (/şikayet|sikayet|öneri|oneri|sorun|memnun değil|problem|şikayette/.test(msgLower)) anlasilanSecim = 4;
+                    else if (/jant.*gelme|gelme.*jant|eksik.*jant|jant.*eksik|teslim.*alma/.test(msgLower)) anlasilanSecim = 5;
+                    else if (/açık.*sipariş|acik.*siparis|bekleyen.*sipariş|sipariş.*durum|siparişlerim/.test(msgLower)) anlasilanSecim = 6;
+                    else if (/fatura|ödeme.*sorgula|tahsilat|hesap.*durum/.test(msgLower)) anlasilanSecim = 7;
                 } else {
-                    if (/kayıt|kayit|yeni|müşteri|musteri|üye|firma/.test(msgLower)) anlasilanSecim = 1;
-                    else if (/lastik|fiyat|ne kadar|ücret|liste|teklif/.test(msgLower)) anlasilanSecim = 2;
-                    else if (/sipariş|siparis|almak|satın|istiyorum/.test(msgLower)) anlasilanSecim = 3;
+                    if (/kayıt|kayit|yeni.*müşteri|musteri.*ol|üye.*ol/.test(msgLower)) anlasilanSecim = 1;
+                    else if (/lastik.*fiyat|fiyat.*lastik|lastik.*ne kadar|ne kadar.*lastik|teklif/.test(msgLower)) anlasilanSecim = 2;
+                    else if (/sipariş.*ver|siparis.*ver|lastik.*almak|sipariş.*vermek/.test(msgLower)) anlasilanSecim = 3;
+                }
+
+                if (anlasilanSecim === 0) {
+                    // Gemini ile dene
+                    anlasilanSecim = await anlaMenuNiyeti(message, kayitli);
                 }
 
                 if (anlasilanSecim > 0) {
-                    // Anladık, o seçimi simüle et
-                    message = anlasilanSecim.toString();
+                    secim = anlasilanSecim;
+                    console.log(`🧠 Niyet tespiti: "${message}" → seçim ${secim}`);
                 } else {
-                    // Anlamadık — Gemini'ye sor
-                    const niyet = await anlaMenuNiyeti(message, kayitli);
-                    if (niyet > 0) {
-                        message = niyet.toString();
-                    } else {
-                        // Hâlâ anlaşılamadı → menüyü tekrar göster
-                        const menu = kayitli ? MENU_KAYITLI : MENU_YENI;
-                        await whatsappGonder(sender, `Anlayamadım, lütfen menüden bir seçim yapın:\n\n${menu}`);
-                        return;
-                    }
+                    const menu = kayitli ? MENU_KAYITLI : MENU_YENI;
+                    await whatsappGonder(sender, `Anlayamadım, lütfen menüden bir seçim yapın:\n\n${menu}`);
+                    return;
                 }
             }
 
