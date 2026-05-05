@@ -454,6 +454,23 @@ function temizleYanit(metin) {
     return metin.replace(/\s*\[URUN:[^\]]+\]/gi, '').trim();
 }
 
+// ── Menü niyeti tespiti (serbest metin → menü numarası) ─────────────────
+async function anlaMenuNiyeti(metin, kayitli) {
+    try {
+        const secenekler = kayitli
+            ? `1: Borç/Bakiye sorgulama\n2: Lastik fiyatı öğrenme\n3: Lastik siparişi verme\n4: Şikayet/Öneri bildirimi\n5: Teslim alınmayan jant\n6: Açık sipariş sorgulama\n7: Ödeme & Fatura Bilgisi`
+            : `1: Yeni müşteri kaydı\n2: Lastik fiyatı öğrenme\n3: Lastik siparişi verme`;
+        const prompt = `Bir lastik firmasının WhatsApp botuna gelen mesaj: "${metin}"\n\nMenü seçenekleri:\n${secenekler}\n\nSadece mesajın en uygun menü numarasını yaz (1-${kayitli?7:3}). Hiçbirine uymuyorsa 0 yaz. Başka hiçbir şey yazma.`;
+        const r = await axios.post('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+            { contents: [{ parts: [{ text: prompt }] }] },
+            { params: { key: GEMINI_KEY }, timeout: 5000 }
+        );
+        const yanit = r.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        const sayi = parseInt(yanit);
+        return isNaN(sayi) ? 0 : sayi;
+    } catch { return 0; }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MENÜ METİNLERİ
 // ═══════════════════════════════════════════════════════════════
@@ -592,11 +609,42 @@ app.post('/webhook', async (req, res) => {
             const secim = parseInt(message.trim());
             const kayitli = session.kayitli;
 
-            // Sayı değilse — sessizce menüyü tekrar göster, ❓ ekleme
+            // Sayı değilse — mesajdan niyeti anla ve o seçeneğe yönlendir
             if (isNaN(secim) || secim < 1) {
-                const menu = kayitli ? MENU_KAYITLI : MENU_YENI;
-                await whatsappGonder(sender, menu);
-                return;
+                const msgLower = message.toLowerCase().trim();
+
+                // Hızlı keyword eşleşmesi (Gemini'ye gerek kalmadan)
+                let anlasilanSecim = 0;
+
+                if (kayitli) {
+                    if (/bak[ıi]ye|borç|borc|bor[çc]|ne kadar|bakiye|ödeme durumu|borcum/.test(msgLower)) anlasilanSecim = 1;
+                    else if (/lastik|fiyat|ne kadar|ücret|liste|teklif|fiyatı|para/.test(msgLower)) anlasilanSecim = 2;
+                    else if (/sipariş|siparis|almak|satın|al$|order|istiyorum/.test(msgLower)) anlasilanSecim = 3;
+                    else if (/şikayet|sikayet|öneri|oneri|sorun|problem|şikâyet/.test(msgLower)) anlasilanSecim = 4;
+                    else if (/jant|eksik|teslim|gelme|almad/.test(msgLower)) anlasilanSecim = 5;
+                    else if (/açık|acik|bekleyen|sipari[sş] durumu|siparişlerim/.test(msgLower)) anlasilanSecim = 6;
+                    else if (/fatura|ödeme|odeme|tahsilat|fiş|makbuz|hesap/.test(msgLower)) anlasilanSecim = 7;
+                } else {
+                    if (/kayıt|kayit|yeni|müşteri|musteri|üye|firma/.test(msgLower)) anlasilanSecim = 1;
+                    else if (/lastik|fiyat|ne kadar|ücret|liste|teklif/.test(msgLower)) anlasilanSecim = 2;
+                    else if (/sipariş|siparis|almak|satın|istiyorum/.test(msgLower)) anlasilanSecim = 3;
+                }
+
+                if (anlasilanSecim > 0) {
+                    // Anladık, o seçimi simüle et
+                    message = anlasilanSecim.toString();
+                } else {
+                    // Anlamadık — Gemini'ye sor
+                    const niyet = await anlaMenuNiyeti(message, kayitli);
+                    if (niyet > 0) {
+                        message = niyet.toString();
+                    } else {
+                        // Hâlâ anlaşılamadı → menüyü tekrar göster
+                        const menu = kayitli ? MENU_KAYITLI : MENU_YENI;
+                        await whatsappGonder(sender, `Anlayamadım, lütfen menüden bir seçim yapın:\n\n${menu}`);
+                        return;
+                    }
+                }
             }
 
             if (kayitli) {
